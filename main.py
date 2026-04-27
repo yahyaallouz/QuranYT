@@ -74,9 +74,18 @@ def main():
     
     print(f"Selected Ayah: Surah {selected['surah_name_en']} [{ayah_id}]")
     
-    ref_text = f"Surah {selected['surah_name_en']} {surah_num}:{ayah_num}"
-    title = f"Listen to this beautiful Qur'an recitation 🤍 | {ref_text} #shorts #quran"
-    description = f"Qur'an Recitation: Mishary Rashid Alafasy.\n\nSurah {selected['surah_name_en']} ({surah_num}:{ayah_num})\nTranslation:\n{selected['english_translation']}\n\n#quran #islam #allah #recitation #shorts"
+    ref_text = f"Surah {selected['surah_name_en']} [{surah_num}:{ayah_num}]"
+    title = f"Beautiful Qur'an Recitation 🤍 {ref_text} #shorts #quran"
+    
+    description = (
+        f"Experience the peace of the Holy Qur'an with this beautiful recitation of {ref_text}.\n\n"
+        f"✨ Reciter: Mishary Rashid Alafasy\n"
+        f"📖 Translation:\n\"{selected['english_translation']}\"\n\n"
+        f"May this bring peace to your heart. Don't forget to like, subscribe, and share for more daily Qur'an verses! 🤍\n\n"
+        f"Keywords: quran recitation, beautiful quran, soothing quran recitation, "
+        f"quran shorts, daily ayah, islamic reminders, mishary rashid alafasy, peaceful quran\n\n"
+        f"#quran #islam #quranrecitation #peace #shorts"
+    )
     
     try:
         # 1. Generate Video
