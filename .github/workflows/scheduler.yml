@@ -28,8 +28,10 @@ jobs:
           sudo apt-get install -y ffmpeg fontconfig
 
       - name: Setup Secrets
+        env:
+          YOUTUBE_TOKEN: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
-          echo "${{ secrets.YOUTUBE_TOKEN_JSON }}" > token.json
+          echo "$YOUTUBE_TOKEN" > token.json
           
       - name: Run Main Workflow
         env:
