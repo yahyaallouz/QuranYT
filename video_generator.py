@@ -5,14 +5,6 @@ import random
 import json
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
-from arabic_reshaper import ArabicReshaper
-from bidi.algorithm import get_display
-
-# Create reshaper ONCE with tashkeel preservation
-_reshaper = ArabicReshaper(configuration={
-    'delete_harakat': False,
-    'delete_tatweel': False,
-})
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(DATA_DIR, "assets")
@@ -22,6 +14,18 @@ USED_BGS_PATH = os.path.join(DATA_DIR, "data", "used_backgrounds.json")
 BG_MEMORY = 20
 
 os.makedirs(ASSETS_DIR, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Detect the best PIL layout engine available.
+# RAQM (via libraqm + HarfBuzz) handles Arabic OpenType shaping natively —
+# tashkeel, ligatures, RTL — all perfect.  Falls back to BASIC if unavailable.
+# ---------------------------------------------------------------------------
+try:
+    _LAYOUT = ImageFont.Layout.RAQM
+    print("[font] RAQM layout engine available ✓ (HarfBuzz Arabic shaping)")
+except AttributeError:
+    _LAYOUT = ImageFont.Layout.BASIC
+    print("[font] RAQM not available, using BASIC layout")
 
 
 def get_audio_duration(mp3_path):
@@ -45,65 +49,60 @@ def download_audio_for_check(audio_url):
 
 
 def get_arabic_font_path():
-    """Find a working Arabic font on the system. No download needed."""
+    """Find Amiri or another Arabic-capable font on the system."""
     import platform
     import glob
-    candidates = []
-    
+
     if platform.system() == "Windows":
-        candidates = [
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/times.ttf",
-        ]
+        for p in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/times.ttf"]:
+            if os.path.exists(p):
+                print(f"[font] Using: {p}")
+                return p
     else:
-        # Search for Amiri font (apt: fonts-hosny-amiri) anywhere on the system
-        amiri_search = glob.glob("/usr/share/fonts/**/Amiri*.ttf", recursive=True)
-        if amiri_search:
-            # Prefer Regular over Bold
-            for f in sorted(amiri_search):
+        # Search for Amiri (installed via apt: fonts-hosny-amiri)
+        hits = glob.glob("/usr/share/fonts/**/Amiri*.ttf", recursive=True)
+        if hits:
+            # Prefer Regular
+            for f in sorted(hits):
                 if "Regular" in f:
-                    print(f"Using font: {f}")
+                    print(f"[font] Using: {f}")
                     return f
-            print(f"Using font: {amiri_search[0]}")
-            return amiri_search[0]
-        # Ubuntu fallbacks
-        candidates = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-    
-    for path in candidates:
-        if os.path.exists(path):
-            print(f"Using font: {path}")
-            return path
-    
-    raise Exception("No Arabic-capable font found on this system!")
+            print(f"[font] Using: {hits[0]}")
+            return hits[0]
+        # Fallback
+        for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                   "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]:
+            if os.path.exists(p):
+                print(f"[font] Fallback: {p}")
+                return p
+
+    raise Exception("No Arabic-capable font found!")
 
 
 def download_english_font():
     """Download a clean sans-serif font for English text."""
     font_path = os.path.join(ASSETS_DIR, "Roboto-Regular.ttf")
-    if not os.path.exists(font_path):
+    if os.path.exists(font_path):
+        return font_path
+    try:
         url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto%5Bwdth%2Cwght%5D.ttf"
-        try:
-            r = requests.get(url, timeout=30)
-            r.raise_for_status()
-            with open(font_path, "wb") as f:
-                f.write(r.content)
-        except Exception:
-            return None
-    return font_path
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        with open(font_path, "wb") as f:
+            f.write(r.content)
+        return font_path
+    except Exception:
+        return None
 
 
 def fetch_pexels_video(api_key):
     """Fetch and download a nature portrait video from Pexels."""
     print("Fetching background video from Pexels...")
     headers = {"Authorization": api_key}
-    queries = ["nature", "ocean waves", "forest", "night sky", "mountains", "rain", "river", "sunset"]
-    url = (
-        f"https://api.pexels.com/videos/search"
-        f"?query={random.choice(queries)}&orientation=portrait&size=medium&per_page=20"
-    )
+    queries = ["nature", "ocean waves", "forest", "night sky", "mountains",
+               "rain", "river", "sunset"]
+    url = (f"https://api.pexels.com/videos/search"
+           f"?query={random.choice(queries)}&orientation=portrait&size=medium&per_page=20")
 
     r = requests.get(url, headers=headers, timeout=30)
     if r.status_code != 200:
@@ -123,7 +122,6 @@ def fetch_pexels_video(api_key):
 
     selected = random.choice(available)
     used_bgs.append(selected["id"])
-
     with open(USED_BGS_PATH, "w") as f:
         json.dump(used_bgs, f)
 
@@ -136,7 +134,6 @@ def fetch_pexels_video(api_key):
     req = requests.get(best_link, timeout=60)
     with open(vid_path, "wb") as f:
         f.write(req.content)
-
     return vid_path
 
 
@@ -164,108 +161,127 @@ def concatenate_audio(audio1_path, audio2_url):
     return combined_path
 
 
+# ────────────────────────────────────────────────────────────────────────────
+#  TEXT OVERLAY — rendered as a transparent PNG via PIL
+#  With RAQM: HarfBuzz handles Arabic shaping + tashkeel natively.
+#  Without RAQM: falls back to arabic_reshaper + python-bidi.
+# ────────────────────────────────────────────────────────────────────────────
+
+def _reshape_arabic(text):
+    """Reshape + bidi-reorder Arabic text for display.
+    With RAQM this is a no-op (HarfBuzz handles everything).
+    Without RAQM we need arabic_reshaper + python-bidi."""
+    if _LAYOUT == ImageFont.Layout.RAQM:
+        # RAQM handles shaping + bidi natively — pass raw text
+        return text
+    else:
+        # Fallback: use arabic_reshaper + bidi
+        try:
+            from arabic_reshaper import ArabicReshaper
+            from bidi.algorithm import get_display
+            reshaper = ArabicReshaper(configuration={
+                'delete_harakat': False,
+                'delete_tatweel': False,
+            })
+            return get_display(reshaper.reshape(text))
+        except ImportError:
+            return text
+
+
+def _wrap_arabic(text, font, draw, max_width):
+    """Wrap Arabic text on WORD boundaries using pixel-width measurement.
+    Each line is processed independently to preserve word integrity."""
+    words = text.strip().split()
+    if not words:
+        return [text]
+
+    lines = []
+    current_words = []
+
+    for word in words:
+        test_line = ' '.join(current_words + [word])
+        display_line = _reshape_arabic(test_line)
+        bbox = draw.textbbox((0, 0), display_line, font=font)
+        line_w = bbox[2] - bbox[0]
+
+        if line_w > max_width and current_words:
+            # Finalize current line
+            final = ' '.join(current_words)
+            lines.append(_reshape_arabic(final))
+            current_words = [word]
+        else:
+            current_words.append(word)
+
+    if current_words:
+        final = ' '.join(current_words)
+        lines.append(_reshape_arabic(final))
+
+    return lines
+
+
 def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
-    """
-    Render Arabic + English text onto a transparent 1080x1920 PNG using PIL.
-    Uses arabic_reshaper + python-bidi for bulletproof RTL + tashkeel rendering.
-    """
+    """Render Arabic + English text onto a transparent 1080×1920 PNG.
+    Uses RAQM/HarfBuzz for native Arabic shaping when available."""
     print("Rendering text overlay image with PIL...")
     W, H = 1080, 1920
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # --- Arabic text ---
-    arabic_font_size = 80
-    arabic_font = ImageFont.truetype(font_path, arabic_font_size)
-    max_text_width = W - 120  # 60px margin each side
+    # ── Arabic ──────────────────────────────────────────────────
+    ar_size = 72
+    ar_font = ImageFont.truetype(font_path, ar_size, layout_engine=_LAYOUT)
+    max_w = W - 140  # 70 px margin each side
 
-    def wrap_arabic_by_words(text, font, max_w):
-        """Wrap Arabic text on WORD boundaries (spaces) using pixel width measurement.
-        Each line is reshaped and bidi-processed individually to preserve word integrity."""
-        words = text.strip().split()
-        lines = []
-        current_words = []
-
-        for word in words:
-            test_line = ' '.join(current_words + [word])
-            # Reshape+bidi to measure actual rendered width
-            shaped = _reshaper.reshape(test_line)
-            display = get_display(shaped)
-            bbox = draw.textbbox((0, 0), display, font=font)
-            line_w = bbox[2] - bbox[0]
-
-            if line_w > max_w and current_words:
-                # Current line is full, finalize it
-                final_text = ' '.join(current_words)
-                lines.append(get_display(_reshaper.reshape(final_text)))
-                current_words = [word]
-            else:
-                current_words.append(word)
-
-        # Don't forget the last line
-        if current_words:
-            final_text = ' '.join(current_words)
-            lines.append(get_display(_reshaper.reshape(final_text)))
-
-        return lines
-
-    # Process each ayah part (for 2-ayah mode)
+    # Process each ayah part (supports 2-ayah mode)
     ayah_parts = arabic_text.split("\n")
-    arabic_lines = []
+    ar_lines = []
     for part in ayah_parts:
-        part_lines = wrap_arabic_by_words(part, arabic_font, max_text_width)
-        arabic_lines.extend(part_lines)
+        ar_lines.extend(_wrap_arabic(part, ar_font, draw, max_w))
 
-    # Extra line height for tashkeel (diacritics need vertical space)
-    line_height_ar = int(arabic_font_size * 2.2)
-    total_ar_height = len(arabic_lines) * line_height_ar
+    # Generous line height for tashkeel (diacritics above + below)
+    lh_ar = int(ar_size * 2.4)
+    total_h = len(ar_lines) * lh_ar
+    y0 = int(H * 0.28) - total_h // 2
 
-    # Center the Arabic block vertically around 30% from top
-    ar_y_start = int(H * 0.28) - total_ar_height // 2
-
-    for i, line in enumerate(arabic_lines):
-        y = ar_y_start + i * line_height_ar
-        bbox = draw.textbbox((0, 0), line, font=arabic_font)
+    for i, line in enumerate(ar_lines):
+        y = y0 + i * lh_ar
+        bbox = draw.textbbox((0, 0), line, font=ar_font)
         tw = bbox[2] - bbox[0]
         x = (W - tw) // 2
+        # Shadow
+        draw.text((x + 3, y + 3), line, font=ar_font, fill=(0, 0, 0, 190))
+        # Main
+        draw.text((x, y), line, font=ar_font, fill=(255, 255, 255, 255))
 
-        # Draw shadow for readability
-        draw.text((x + 3, y + 3), line, font=arabic_font, fill=(0, 0, 0, 180))
-        # Draw main white text
-        draw.text((x, y), line, font=arabic_font, fill=(255, 255, 255, 255))
-
-    # --- English explanation text ---
+    # ── English explanation ─────────────────────────────────────
     eng_font_path = download_english_font()
-    eng_font_size = 38
-    if eng_font_path:
-        try:
-            eng_font = ImageFont.truetype(eng_font_path, eng_font_size)
-        except Exception:
-            eng_font = ImageFont.truetype(font_path, eng_font_size)
-    else:
-        eng_font = ImageFont.truetype(font_path, eng_font_size)
+    eng_size = 36
+    try:
+        eng_font = ImageFont.truetype(eng_font_path or font_path, eng_size)
+    except Exception:
+        eng_font = ImageFont.truetype(font_path, eng_size)
 
-    eng_lines = textwrap.wrap(explanation_text, width=38)
-    line_height_en = int(eng_font_size * 1.5)
-    en_y_start = int(H * 0.58)
+    eng_lines = textwrap.wrap(explanation_text, width=40)
+    lh_en = int(eng_size * 1.5)
+    en_y0 = int(H * 0.60)
 
     for i, line in enumerate(eng_lines):
-        y = en_y_start + i * line_height_en
+        y = en_y0 + i * lh_en
         bbox = draw.textbbox((0, 0), line, font=eng_font)
         tw = bbox[2] - bbox[0]
         x = (W - tw) // 2
-
         draw.text((x + 2, y + 2), line, font=eng_font, fill=(0, 0, 0, 150))
         draw.text((x, y), line, font=eng_font, fill=(230, 230, 230, 255))
 
-    # --- Reference text (surah name) ---
-    ref_font_size = 34
-    ref_font = eng_font.font_variant(size=ref_font_size) if eng_font_path else ImageFont.truetype(font_path, ref_font_size)
+    # ── Surah reference ─────────────────────────────────────────
+    ref_size = 32
+    try:
+        ref_font = eng_font.font_variant(size=ref_size)
+    except Exception:
+        ref_font = ImageFont.truetype(font_path, ref_size)
     ref_bbox = draw.textbbox((0, 0), ref_text, font=ref_font)
-    ref_tw = ref_bbox[2] - ref_bbox[0]
-    ref_x = (W - ref_tw) // 2
+    ref_x = (W - (ref_bbox[2] - ref_bbox[0])) // 2
     ref_y = int(H * 0.88)
-
     draw.text((ref_x + 2, ref_y + 2), ref_text, font=ref_font, fill=(0, 0, 0, 120))
     draw.text((ref_x, ref_y), ref_text, font=ref_font, fill=(180, 180, 180, 255))
 
@@ -275,25 +291,29 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
     return overlay_path
 
 
+# ────────────────────────────────────────────────────────────────────────────
+#  MAIN VIDEO GENERATION PIPELINE
+# ────────────────────────────────────────────────────────────────────────────
+
 def generate_video(arabic_text, explanation_text, ref_text, audio_url, audio_url_2=None):
-    """Full pipeline: fetch background, audio, render text overlay, compose via FFmpeg."""
-    pexels_key = os.environ.get("PEXELS_API_KEY", "GuLw0mgXERqcuzZeHixe676PraSOXxdWfJF3ABoN8cPzHSJOVWTXsOXJ")
+    """Full pipeline: background + audio + text overlay → final_short.mp4"""
+    pexels_key = os.environ.get("PEXELS_API_KEY",
+                                "GuLw0mgXERqcuzZeHixe676PraSOXxdWfJF3ABoN8cPzHSJOVWTXsOXJ")
     if not pexels_key:
         raise Exception("PEXELS_API_KEY environment variable is missing")
 
     font_path = get_arabic_font_path()
     bg_video = fetch_pexels_video(pexels_key)
 
-    # Audio is already downloaded by main.py for duration check
+    # Audio (already downloaded by main.py for duration check)
     audio_file = os.path.join(ASSETS_DIR, "audio.mp3")
     if not os.path.exists(audio_file):
         download_audio_for_check(audio_url)
 
-    # If 2-ayah mode, concatenate audio
     if audio_url_2:
         audio_file = concatenate_audio(audio_file, audio_url_2)
 
-    # Render text as transparent PNG using PIL (bulletproof Arabic rendering)
+    # Render text as transparent PNG (bulletproof Arabic rendering)
     overlay_path = render_text_overlay(arabic_text, explanation_text, ref_text, font_path)
 
     out_file = os.path.join(ASSETS_DIR, "final_short.mp4")
@@ -303,10 +323,10 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url, audio_url
     print("Running FFmpeg...")
     cmd = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1",           # Loop background video
+        "-stream_loop", "-1",
         "-i", bg_video,
         "-i", audio_file,
-        "-i", overlay_path,             # Text overlay PNG
+        "-i", overlay_path,
         "-filter_complex",
         "[0:v]colorlevels=romax=0.65:gomax=0.65:bomax=0.65,"
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg];"

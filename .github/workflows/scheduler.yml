@@ -22,11 +22,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install FFmpeg and Amiri font
+      - name: Install FFmpeg, fonts, and Arabic shaping libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fontconfig fonts-hosny-amiri
+          sudo apt-get install -y ffmpeg fontconfig fonts-hosny-amiri libraqm-dev libfribidi-dev
           fc-cache -fv
+          # Reinstall Pillow so it picks up libraqm for RAQM layout engine
+          pip install --force-reinstall Pillow
 
       - name: Setup Secrets
         env:
