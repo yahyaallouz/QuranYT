@@ -25,13 +25,13 @@ jobs:
       - name: Install FFmpeg and Amiri font
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fontconfig fonts-amiri
+          sudo apt-get install -y ffmpeg fontconfig fonts-hosny-amiri
           fc-cache -fv
 
       - name: Setup Secrets
         env:
           YOUTUBE_TOKEN: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-        run: echo "$YOUTUBE_TOKEN" > token.json
+        run: python -c "import os; open('token.json','w').write(os.environ['YOUTUBE_TOKEN'])"
 
       - name: Run Main Workflow
         env:
