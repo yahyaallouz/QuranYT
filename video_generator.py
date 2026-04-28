@@ -16,10 +16,20 @@ def download_font():
     font_path = os.path.join(ASSETS_DIR, "Amiri-Bold.ttf")
     if not os.path.exists(font_path):
         print("Downloading Amiri font...")
-        font_url = "https://github.com/alif-type/amiri/raw/main/fonts/Amiri-Bold.ttf"
-        r = requests.get(font_url)
-        with open(font_path, "wb") as f:
-            f.write(r.content)
+        # Use the official GitHub release for reliability
+        font_url = "https://github.com/alif-type/amiri/releases/download/1.000/Amiri-1.000.zip"
+        # Fallback: direct raw file link
+        fallback_url = "https://raw.githubusercontent.com/alif-type/amiri/main/fonts/Amiri-Bold.ttf"
+        try:
+            r = requests.get(fallback_url, timeout=30)
+            r.raise_for_status()
+            with open(font_path, "wb") as f:
+                f.write(r.content)
+            print(f"Font downloaded: {font_path} ({os.path.getsize(font_path)} bytes)")
+        except Exception as e:
+            raise Exception(f"Failed to download Amiri font: {e}")
+    else:
+        print(f"Font already present: {font_path}")
     return font_path
 
 def fetch_pexels_video(api_key):
@@ -127,8 +137,22 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url):
     # 4. Truncate video to shortest (audio length)
     # We loop the video if it's shorter than audio. Pexels are usually 10-15s, but ayahs are short.
     # We add -vf "format=yuv420p,colorchannelmixer=aa=0.7" ? No, `eq=brightness=-0.3` is simpler.
-    # Create a relative path to avoid the drive letter ':' breaking FFmpeg -vf parser
-    ass_rel = os.path.relpath(ass_file, DATA_DIR).replace('\\', '/')
+    # Pass fontsdir directly in the ASS filter so FFmpeg finds Amiri-Bold.ttf
+    # regardless of system fontconfig state (works on both local and GitHub Actions)
+    fonts_dir = ASSETS_DIR.replace('\\', '/')
+    # On Linux/CI use forward slashes; on Windows use forward slashes too for FFmpeg
+    ass_abs = ass_file.replace('\\', '/')
+    # Remove drive letter colon on Windows (e.g. D:/foo -> /foo) to avoid FFmpeg vf parser issues
+    import platform
+    if platform.system() == "Windows":
+        ass_abs = '/' + ass_abs.replace(':', '')
+        fonts_dir = '/' + fonts_dir.replace(':', '')
+
+    vf_filter = (
+        f"colorlevels=romax=0.7:gomax=0.7:bomax=0.7,"
+        f"ass={ass_abs}:fontsdir={fonts_dir},"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+    )
 
     print("Running FFmpeg...")
     cmd = [
@@ -137,22 +161,16 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url):
         "-stream_loop", "-1",           # Loop video if audio is longer
         "-i", bg_video,
         "-i", audio_file,
-        "-vf", f"colorlevels=romax=0.7:gomax=0.7:bomax=0.7,ass={ass_rel},scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        "-vf", vf_filter,
         "-c:a", "aac",
         "-c:v", "libx264",
         "-preset", "fast",
-        "-shortest",                    # Finish encoding when the shortest input (the audio, since video loops) ends
+        "-shortest",                    # Finish when audio ends
         out_file
     ]
-    
+
     print("Executing command: ", " ".join(cmd))
-    
-    # We add the assets dir to fontconfig path so ASS finds Amiri
-    env = os.environ.copy()
-    env["FC_CONFIG_DIR"] = ASSETS_DIR
-    env["FONTCONFIG_PATH"] = ASSETS_DIR
-    
-    subprocess.run(cmd, check=True, env=env, cwd=DATA_DIR)
+    subprocess.run(cmd, check=True, cwd=DATA_DIR)
     print(f"Video generated at {out_file}")
     
     return out_file
