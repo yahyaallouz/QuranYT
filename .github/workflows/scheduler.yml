@@ -31,7 +31,8 @@ jobs:
         env:
           YOUTUBE_TOKEN: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
-          echo "$YOUTUBE_TOKEN" > token.json
+          python -c "import os; open('token.json', 'w').write(os.environ.get('YOUTUBE_TOKEN', '{}'))"
+
           
       - name: Run Main Workflow
         env:
