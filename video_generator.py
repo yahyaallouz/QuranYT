@@ -5,8 +5,14 @@ import random
 import json
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
+from arabic_reshaper import ArabicReshaper
 from bidi.algorithm import get_display
+
+# Create reshaper ONCE with tashkeel preservation
+_reshaper = ArabicReshaper(configuration={
+    'delete_harakat': False,
+    'delete_tatweel': False,
+})
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(DATA_DIR, "assets")
@@ -41,20 +47,27 @@ def download_audio_for_check(audio_url):
 def get_arabic_font_path():
     """Find a working Arabic font on the system. No download needed."""
     import platform
+    import glob
     candidates = []
     
     if platform.system() == "Windows":
-        # Windows has Arial which supports Arabic
         candidates = [
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/times.ttf",
         ]
     else:
-        # Linux/GitHub Actions — installed via apt: fonts-hosny-amiri
+        # Search for Amiri font (apt: fonts-hosny-amiri) anywhere on the system
+        amiri_search = glob.glob("/usr/share/fonts/**/Amiri*.ttf", recursive=True)
+        if amiri_search:
+            # Prefer Regular over Bold
+            for f in sorted(amiri_search):
+                if "Regular" in f:
+                    print(f"Using font: {f}")
+                    return f
+            print(f"Using font: {amiri_search[0]}")
+            return amiri_search[0]
+        # Ubuntu fallbacks
         candidates = [
-            "/usr/share/fonts/truetype/hosny-amiri/Amiri-Regular.ttf",
-            "/usr/share/fonts/truetype/hosny-amiri/Amiri-Bold.ttf",
-            # Ubuntu fallback
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         ]
@@ -176,10 +189,7 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
         for word in words:
             test_line = ' '.join(current_words + [word])
             # Reshape+bidi to measure actual rendered width
-            shaped = arabic_reshaper.reshape(test_line, configuration={
-                'delete_harakat': False,
-                'delete_tatweel': False,
-            })
+            shaped = _reshaper.reshape(test_line)
             display = get_display(shaped)
             bbox = draw.textbbox((0, 0), display, font=font)
             line_w = bbox[2] - bbox[0]
@@ -187,11 +197,7 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
             if line_w > max_w and current_words:
                 # Current line is full, finalize it
                 final_text = ' '.join(current_words)
-                shaped_final = arabic_reshaper.reshape(final_text, configuration={
-                    'delete_harakat': False,
-                    'delete_tatweel': False,
-                })
-                lines.append(get_display(shaped_final))
+                lines.append(get_display(_reshaper.reshape(final_text)))
                 current_words = [word]
             else:
                 current_words.append(word)
@@ -199,11 +205,7 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
         # Don't forget the last line
         if current_words:
             final_text = ' '.join(current_words)
-            shaped_final = arabic_reshaper.reshape(final_text, configuration={
-                'delete_harakat': False,
-                'delete_tatweel': False,
-            })
-            lines.append(get_display(shaped_final))
+            lines.append(get_display(_reshaper.reshape(final_text)))
 
         return lines
 
