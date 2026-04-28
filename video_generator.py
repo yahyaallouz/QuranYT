@@ -176,6 +176,9 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
         wrapped = textwrap.wrap(bidi_text, width=28)
         if not wrapped:
             wrapped = [bidi_text]
+        # After bidi reordering, wrap splits LTR — reverse so the ayah
+        # beginning appears at the top (RTL reading order top-to-bottom)
+        wrapped.reverse()
         arabic_lines.extend(wrapped)
 
     # Calculate total arabic block height
