@@ -154,7 +154,7 @@ def concatenate_audio(audio1_path, audio2_url):
 def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
     """
     Render Arabic + English text onto a transparent 1080x1920 PNG using PIL.
-    This bypasses all ASS/libass RTL bugs by using arabic_reshaper + python-bidi.
+    Uses arabic_reshaper + python-bidi for bulletproof RTL + tashkeel rendering.
     """
     print("Rendering text overlay image with PIL...")
     W, H = 1080, 1920
@@ -162,33 +162,63 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
     draw = ImageDraw.Draw(img)
 
     # --- Arabic text ---
-    arabic_font_size = 85
+    arabic_font_size = 80
     arabic_font = ImageFont.truetype(font_path, arabic_font_size)
-    
-    # Split multi-ayah text
+    max_text_width = W - 120  # 60px margin each side
+
+    def wrap_arabic_by_words(text, font, max_w):
+        """Wrap Arabic text on WORD boundaries (spaces) using pixel width measurement.
+        Each line is reshaped and bidi-processed individually to preserve word integrity."""
+        words = text.strip().split()
+        lines = []
+        current_words = []
+
+        for word in words:
+            test_line = ' '.join(current_words + [word])
+            # Reshape+bidi to measure actual rendered width
+            shaped = arabic_reshaper.reshape(test_line, configuration={
+                'delete_harakat': False,
+                'delete_tatweel': False,
+            })
+            display = get_display(shaped)
+            bbox = draw.textbbox((0, 0), display, font=font)
+            line_w = bbox[2] - bbox[0]
+
+            if line_w > max_w and current_words:
+                # Current line is full, finalize it
+                final_text = ' '.join(current_words)
+                shaped_final = arabic_reshaper.reshape(final_text, configuration={
+                    'delete_harakat': False,
+                    'delete_tatweel': False,
+                })
+                lines.append(get_display(shaped_final))
+                current_words = [word]
+            else:
+                current_words.append(word)
+
+        # Don't forget the last line
+        if current_words:
+            final_text = ' '.join(current_words)
+            shaped_final = arabic_reshaper.reshape(final_text, configuration={
+                'delete_harakat': False,
+                'delete_tatweel': False,
+            })
+            lines.append(get_display(shaped_final))
+
+        return lines
+
+    # Process each ayah part (for 2-ayah mode)
     ayah_parts = arabic_text.split("\n")
     arabic_lines = []
     for part in ayah_parts:
-        # Reshape Arabic — MUST preserve tashkeel (harakat)
-        reshaped = arabic_reshaper.reshape(part.strip(), configuration={
-            'delete_harakat': False,
-            'delete_tatweel': False,
-        })
-        bidi_text = get_display(reshaped)
-        # Wrap long lines (approx 28 chars per line at this font size)
-        wrapped = textwrap.wrap(bidi_text, width=28)
-        if not wrapped:
-            wrapped = [bidi_text]
-        # After bidi reordering, wrap splits LTR — reverse so the ayah
-        # beginning appears at the top (RTL reading order top-to-bottom)
-        wrapped.reverse()
-        arabic_lines.extend(wrapped)
+        part_lines = wrap_arabic_by_words(part, arabic_font, max_text_width)
+        arabic_lines.extend(part_lines)
 
-    # Calculate total arabic block height
-    line_height_ar = int(arabic_font_size * 1.6)
+    # Extra line height for tashkeel (diacritics need vertical space)
+    line_height_ar = int(arabic_font_size * 2.2)
     total_ar_height = len(arabic_lines) * line_height_ar
 
-    # Start Arabic at roughly 30% from top
+    # Center the Arabic block vertically around 30% from top
     ar_y_start = int(H * 0.28) - total_ar_height // 2
 
     for i, line in enumerate(arabic_lines):
@@ -197,9 +227,9 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
         tw = bbox[2] - bbox[0]
         x = (W - tw) // 2
 
-        # Draw shadow
+        # Draw shadow for readability
         draw.text((x + 3, y + 3), line, font=arabic_font, fill=(0, 0, 0, 180))
-        # Draw main text
+        # Draw main white text
         draw.text((x, y), line, font=arabic_font, fill=(255, 255, 255, 255))
 
     # --- English explanation text ---
