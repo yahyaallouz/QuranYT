@@ -169,8 +169,11 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
     ayah_parts = arabic_text.split("\n")
     arabic_lines = []
     for part in ayah_parts:
-        # Reshape and reorder Arabic for correct display
-        reshaped = arabic_reshaper.reshape(part.strip())
+        # Reshape Arabic — MUST preserve tashkeel (harakat)
+        reshaped = arabic_reshaper.reshape(part.strip(), configuration={
+            'delete_harakat': False,
+            'delete_tatweel': False,
+        })
         bidi_text = get_display(reshaped)
         # Wrap long lines (approx 28 chars per line at this font size)
         wrapped = textwrap.wrap(bidi_text, width=28)
