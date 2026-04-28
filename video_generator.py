@@ -122,26 +122,28 @@ def generate_ass_subtitle(arabic_text, explanation_text, ref_text):
     print("Generating .ass subtitle file...")
     ass_path = os.path.join(ASSETS_DIR, "subtitles.ass")
 
-    # Handle 2-ayah split: replace \n with {\N} (ASS line break)
+    # Handle 2-ayah split: replace \n with {\N} (ASS newline)
     arabic_ass = arabic_text.replace("\n", "{\\N}")
+    # Wrap Arabic in Unicode RLE (Right-to-Left Embedding) so libass renders RTL correctly
+    arabic_ass = "\u202B" + arabic_ass + "\u202C"
 
     ass_content = f"""[Script Info]
 ScriptType: v4.00+
 Collisions: Normal
 PlayResX: 1080
 PlayResY: 1920
-WrapStyle: 1
+WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Arabic,Amiri,110,&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,-1,0,0,0,100,100,2,0,1,4,3,5,60,60,760,1
-Style: English,Arial,52,&H00F0F0F0,&H000000FF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,2,2,2,60,60,260,1
+Style: Arabic,Amiri,100,&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,-1,0,0,0,100,100,2,0,1,4,3,5,80,80,760,1
+Style: English,Arial,50,&H00F0F0F0,&H000000FF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,2,2,2,80,80,260,1
 Style: Ref,Arial,42,&H00AAAAAA,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,1,1,8,60,60,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:59:00.00,Arabic,,0,0,0,,{{\\q1}}{arabic_ass}
-Dialogue: 0,0:00:00.00,0:59:00.00,English,,0,0,0,,{{\\q1}}{explanation_text}
+Dialogue: 0,0:00:00.00,0:59:00.00,Arabic,,0,0,0,,{arabic_ass}
+Dialogue: 0,0:00:00.00,0:59:00.00,English,,0,0,0,,{explanation_text}
 Dialogue: 0,0:00:00.00,0:59:00.00,Ref,,0,0,0,,{ref_text}
 """
     with open(ass_path, "w", encoding="utf-8") as f:
