@@ -4,3 +4,6 @@ google-auth-httplib2
 requests
 pytz
 mutagen
+arabic_reshaper
+python-bidi
+Pillow
