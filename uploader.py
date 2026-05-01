@@ -3,40 +3,53 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# The YouTube API requires token.json generated from OAuth locally.
-# It should be injected by GitHub Actions into the runner environment.
+# YouTube API requires token.json generated from OAuth locally.
+# Injected by GitHub Actions into the runner environment.
+
 
 def get_authenticated_service():
     if not os.path.exists('token.json'):
         raise Exception("token.json not found! You must authenticate locally first and supply it.")
-    
+
     creds = Credentials.from_authorized_user_file('token.json')
     return build('youtube', 'v3', credentials=creds, cache_discovery=False)
 
-def upload_video(file_path, title, description):
+
+def upload_video(file_path, title, description, tags=None):
+    """Upload a video to YouTube Shorts.
+
+    Args:
+        file_path: Path to the video file.
+        title: Video title (no hashtags, ≤65 chars recommended).
+        description: Full description including hashtags.
+        tags: Optional list of tags. Defaults to a standard set.
+    """
     youtube = get_authenticated_service()
+
+    if tags is None:
+        tags = ['quran', 'islam', 'shorts', 'recitation', 'peace']
 
     body = {
         'snippet': {
-            'title': title[:100],  # Title limit is 100 char
-            'description': description[:5000], 
-            'tags': ['quran', 'islam', 'shorts', 'recitation', 'peace'],
-            'categoryId': '22'  # People & Blogs
+            'title': title[:100],  # YouTube API title limit
+            'description': description[:5000],
+            'tags': tags,
+            'categoryId': '27',  # Education
         },
         'status': {
             'privacyStatus': 'public',
-            'selfDeclaredMadeForKids': False
-        }
+            'selfDeclaredMadeForKids': False,
+        },
     }
 
     print(f"Uploading {file_path} to YouTube Shorts...")
-    
+
     media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
 
     request = youtube.videos().insert(
         part=",".join(body.keys()),
         body=body,
-        media_body=media
+        media_body=media,
     )
 
     response = None

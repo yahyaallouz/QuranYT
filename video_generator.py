@@ -5,20 +5,21 @@ import random
 import json
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
+from variation_engine import (
+    load_history, save_history, pick_unique, record,
+    pick_background_query, get_subtitle_offset, get_ken_burns_params,
+)
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(DATA_DIR, "assets")
 USED_BGS_PATH = os.path.join(DATA_DIR, "data", "used_backgrounds.json")
 
-# Avoid reusing a background within the last N videos
-BG_MEMORY = 20
+BG_MEMORY = 20  # avoid reusing a Pexels video within the last N videos
 
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Detect the best PIL layout engine available.
-# RAQM (via libraqm + HarfBuzz) handles Arabic OpenType shaping natively —
-# tashkeel, ligatures, RTL — all perfect.  Falls back to BASIC if unavailable.
 # ---------------------------------------------------------------------------
 try:
     _LAYOUT = ImageFont.Layout.RAQM
@@ -29,7 +30,7 @@ except AttributeError:
 
 
 def get_audio_duration(mp3_path):
-    """Return duration in seconds using mutagen (pure Python, no ffprobe needed)."""
+    """Return duration in seconds using mutagen (pure Python, no ffprobe)."""
     try:
         from mutagen.mp3 import MP3
         audio = MP3(mp3_path)
@@ -59,17 +60,14 @@ def get_arabic_font_path():
                 print(f"[font] Using: {p}")
                 return p
     else:
-        # Search for Amiri (installed via apt: fonts-hosny-amiri)
         hits = glob.glob("/usr/share/fonts/**/Amiri*.ttf", recursive=True)
         if hits:
-            # Prefer Regular
             for f in sorted(hits):
                 if "Regular" in f:
                     print(f"[font] Using: {f}")
                     return f
             print(f"[font] Using: {hits[0]}")
             return hits[0]
-        # Fallback
         for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]:
             if os.path.exists(p):
@@ -95,14 +93,23 @@ def download_english_font():
         return None
 
 
-def fetch_pexels_video(api_key):
+def fetch_pexels_video(api_key, history=None):
     """Fetch and download a nature portrait video from Pexels."""
+    if not api_key:
+        raise Exception("PEXELS_API_KEY environment variable is missing!")
+
     print("Fetching background video from Pexels...")
+
+    if history is None:
+        history = load_history()
+
+    query = pick_background_query(history=history, memory=BG_MEMORY)
+    record(history, "bg_queries", query, memory=BG_MEMORY)
+    print(f"[bg] Using query: {query}")
+
     headers = {"Authorization": api_key}
-    queries = ["nature", "ocean waves", "forest", "night sky", "mountains",
-               "rain", "river", "sunset"]
     url = (f"https://api.pexels.com/videos/search"
-           f"?query={random.choice(queries)}&orientation=portrait&size=medium&per_page=20")
+           f"?query={query}&orientation=portrait&size=medium&per_page=20")
 
     r = requests.get(url, headers=headers, timeout=30)
     if r.status_code != 200:
@@ -110,10 +117,14 @@ def fetch_pexels_video(api_key):
 
     videos = r.json().get("videos", [])
 
+    # Load used background IDs
     used_bgs = []
     if os.path.exists(USED_BGS_PATH):
-        with open(USED_BGS_PATH, "r") as f:
-            used_bgs = json.load(f)
+        try:
+            with open(USED_BGS_PATH, "r") as f:
+                used_bgs = json.load(f)
+        except (json.JSONDecodeError, Exception):
+            used_bgs = []
     used_bgs = used_bgs[-BG_MEMORY:]
 
     available = [v for v in videos if v["id"] not in used_bgs]
@@ -125,6 +136,8 @@ def fetch_pexels_video(api_key):
     with open(USED_BGS_PATH, "w") as f:
         json.dump(used_bgs, f)
 
+    record(history, "backgrounds", selected["id"], memory=BG_MEMORY)
+
     video_files = [vf for vf in selected["video_files"] if vf.get("height")]
     video_files.sort(key=lambda x: x["height"], reverse=True)
     best_link = video_files[0]["link"]
@@ -134,7 +147,7 @@ def fetch_pexels_video(api_key):
     req = requests.get(best_link, timeout=60)
     with open(vid_path, "wb") as f:
         f.write(req.content)
-    return vid_path
+    return vid_path, history
 
 
 def concatenate_audio(audio1_path, audio2_url):
@@ -162,20 +175,14 @@ def concatenate_audio(audio1_path, audio2_url):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  TEXT OVERLAY — rendered as a transparent PNG via PIL
-#  With RAQM: HarfBuzz handles Arabic shaping + tashkeel natively.
-#  Without RAQM: falls back to arabic_reshaper + python-bidi.
+#  TEXT OVERLAY — rendered as transparent PNGs via PIL
 # ────────────────────────────────────────────────────────────────────────────
 
 def _reshape_arabic(text):
-    """Reshape + bidi-reorder Arabic text for display.
-    With RAQM this is a no-op (HarfBuzz handles everything).
-    Without RAQM we need arabic_reshaper + python-bidi."""
+    """Reshape + bidi-reorder Arabic text for display."""
     if _LAYOUT == ImageFont.Layout.RAQM:
-        # RAQM handles shaping + bidi natively — pass raw text
         return text
     else:
-        # Fallback: use arabic_reshaper + bidi
         try:
             from arabic_reshaper import ArabicReshaper
             from bidi.algorithm import get_display
@@ -189,8 +196,7 @@ def _reshape_arabic(text):
 
 
 def _wrap_arabic(text, font, draw, max_width):
-    """Wrap Arabic text on WORD boundaries using pixel-width measurement.
-    Each line is processed independently to preserve word integrity."""
+    """Wrap Arabic text on WORD boundaries using pixel-width measurement."""
     words = text.strip().split()
     if not words:
         return [text]
@@ -205,7 +211,6 @@ def _wrap_arabic(text, font, draw, max_width):
         line_w = bbox[2] - bbox[0]
 
         if line_w > max_width and current_words:
-            # Finalize current line
             final = ' '.join(current_words)
             lines.append(_reshape_arabic(final))
             current_words = [word]
@@ -219,9 +224,45 @@ def _wrap_arabic(text, font, draw, max_width):
     return lines
 
 
-def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
+def render_hook_overlay(hook_text, font_path):
+    """Render the hook text as a centered transparent 1080×1920 PNG.
+    Full opacity — no gradual fade (first-frame readability)."""
+    print(f"Rendering hook overlay: '{hook_text}'")
+    W, H = 1080, 1920
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    eng_font_path = download_english_font()
+    hook_size = 52
+    try:
+        hook_font = ImageFont.truetype(eng_font_path or font_path, hook_size)
+    except Exception:
+        hook_font = ImageFont.truetype(font_path, hook_size)
+
+    # Wrap if needed
+    lines = textwrap.wrap(hook_text, width=28)
+    lh = int(hook_size * 1.6)
+    total_h = len(lines) * lh
+    y0 = (H // 2) - total_h // 2  # center vertically
+
+    for i, line in enumerate(lines):
+        y = y0 + i * lh
+        bbox = draw.textbbox((0, 0), line, font=hook_font)
+        tw = bbox[2] - bbox[0]
+        x = (W - tw) // 2
+        # Strong shadow for readability
+        draw.text((x + 3, y + 3), line, font=hook_font, fill=(0, 0, 0, 220))
+        draw.text((x, y), line, font=hook_font, fill=(255, 255, 255, 255))
+
+    path = os.path.join(ASSETS_DIR, "hook_overlay.png")
+    img.save(path, "PNG")
+    return path
+
+
+def render_text_overlay(arabic_text, explanation_text, ref_text, font_path,
+                        subtitle_offset=0):
     """Render Arabic + English text onto a transparent 1080×1920 PNG.
-    Uses RAQM/HarfBuzz for native Arabic shaping when available."""
+    subtitle_offset shifts Arabic text vertically (±20px safe zone)."""
     print("Rendering text overlay image with PIL...")
     W, H = 1080, 1920
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -230,27 +271,23 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
     # ── Arabic ──────────────────────────────────────────────────
     ar_size = 72
     ar_font = ImageFont.truetype(font_path, ar_size, layout_engine=_LAYOUT)
-    max_w = W - 140  # 70 px margin each side
+    max_w = W - 140
 
-    # Process each ayah part (supports 2-ayah mode)
     ayah_parts = arabic_text.split("\n")
     ar_lines = []
     for part in ayah_parts:
         ar_lines.extend(_wrap_arabic(part, ar_font, draw, max_w))
 
-    # Generous line height for tashkeel (diacritics above + below)
     lh_ar = int(ar_size * 2.4)
     total_h = len(ar_lines) * lh_ar
-    y0 = int(H * 0.28) - total_h // 2
+    y0 = int(H * 0.28) - total_h // 2 + subtitle_offset
 
     for i, line in enumerate(ar_lines):
         y = y0 + i * lh_ar
         bbox = draw.textbbox((0, 0), line, font=ar_font)
         tw = bbox[2] - bbox[0]
         x = (W - tw) // 2
-        # Shadow
         draw.text((x + 3, y + 3), line, font=ar_font, fill=(0, 0, 0, 190))
-        # Main
         draw.text((x, y), line, font=ar_font, fill=(255, 255, 255, 255))
 
     # ── English explanation ─────────────────────────────────────
@@ -292,18 +329,56 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+#  SILENCE PADDING
+# ────────────────────────────────────────────────────────────────────────────
+
+def generate_silence(duration_sec):
+    """Generate a short silence audio file."""
+    silence_path = os.path.join(ASSETS_DIR, "silence.mp3")
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono",
+        "-t", str(duration_sec),
+        "-c:a", "libmp3lame", "-q:a", "9",
+        silence_path
+    ], check=True, capture_output=True)
+    return silence_path
+
+
+def prepend_silence(audio_path, silence_sec):
+    """Prepend silence to the audio file for hook phase."""
+    silence_path = generate_silence(silence_sec)
+    padded_path = os.path.join(ASSETS_DIR, "audio_padded.mp3")
+    concat_list = os.path.join(ASSETS_DIR, "pad_concat.txt")
+    with open(concat_list, "w") as f:
+        f.write(f"file '{silence_path}'\n")
+        f.write(f"file '{audio_path}'\n")
+
+    subprocess.run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", concat_list, "-c", "copy", padded_path
+    ], check=True, capture_output=True)
+
+    os.remove(concat_list)
+    return padded_path
+
+
+# ────────────────────────────────────────────────────────────────────────────
 #  MAIN VIDEO GENERATION PIPELINE
 # ────────────────────────────────────────────────────────────────────────────
 
-def generate_video(arabic_text, explanation_text, ref_text, audio_url, audio_url_2=None):
-    """Full pipeline: background + audio + text overlay → final_short.mp4"""
-    pexels_key = os.environ.get("PEXELS_API_KEY",
-                                "GuLw0mgXERqcuzZeHixe676PraSOXxdWfJF3ABoN8cPzHSJOVWTXsOXJ")
+def generate_video(arabic_text, explanation_text, ref_text, audio_url,
+                   audio_url_2=None, hook_text=None, history=None):
+    """Full pipeline: background + audio + hook overlay + text overlay → final_short.mp4"""
+    pexels_key = os.environ.get("PEXELS_API_KEY")
     if not pexels_key:
-        raise Exception("PEXELS_API_KEY environment variable is missing")
+        raise Exception("PEXELS_API_KEY environment variable is missing!")
+
+    if history is None:
+        history = load_history()
 
     font_path = get_arabic_font_path()
-    bg_video = fetch_pexels_video(pexels_key)
+    bg_video, history = fetch_pexels_video(pexels_key, history=history)
 
     # Audio (already downloaded by main.py for duration check)
     audio_file = os.path.join(ASSETS_DIR, "audio.mp3")
@@ -313,36 +388,110 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url, audio_url
     if audio_url_2:
         audio_file = concatenate_audio(audio_file, audio_url_2)
 
-    # Render text as transparent PNG (bulletproof Arabic rendering)
-    overlay_path = render_text_overlay(arabic_text, explanation_text, ref_text, font_path)
+    # Prepend randomized silence padding for hook phase (0.3–0.6s)
+    hook_silence = round(random.uniform(0.3, 0.6), 2)
+    # Add 2s for the hook display phase
+    total_hook_time = 2.0 + hook_silence
+    audio_file = prepend_silence(audio_file, total_hook_time)
+    print(f"[pacing] Hook phase: {total_hook_time:.2f}s (2s hook + {hook_silence}s silence)")
+
+    # Get audio duration for dynamic video length
+    audio_duration = get_audio_duration(audio_file)
+    # Target 22-28s: audio + 4s for explanation tail
+    video_duration = min(max(audio_duration + 4, 22), 30)
+    print(f"[timing] Audio: {audio_duration:.1f}s → Video duration: {video_duration:.1f}s")
+
+    # Explanation appears at ~0:12-0:14 from start
+    explanation_start = round(random.uniform(12.0, 14.0), 1)
+
+    # Subtitle offset (±20px safe zone)
+    sub_offset = get_subtitle_offset()
+
+    # Ken Burns params
+    kb = get_ken_burns_params()
+    print(f"[fx] Ken Burns: {kb['direction']} zoom {kb['zoom_start']}→{kb['zoom_end']}")
+
+    # Render overlays
+    overlay_path = render_text_overlay(arabic_text, explanation_text, ref_text,
+                                       font_path, subtitle_offset=sub_offset)
+
+    hook_overlay_path = None
+    if hook_text:
+        hook_overlay_path = render_hook_overlay(hook_text, font_path)
 
     out_file = os.path.join(ASSETS_DIR, "final_short.mp4")
     if os.path.exists(out_file):
         os.remove(out_file)
 
+    # ── Build FFmpeg command ──────────────────────────────────────
     print("Running FFmpeg...")
+
+    # Ken Burns zoom via zoompan (applied to background)
+    # zoompan: z interpolates from zoom_start to zoom_end over video_duration
+    fps = 30
+    total_frames = int(video_duration * fps)
+    z_start = kb["zoom_start"]
+    z_end = kb["zoom_end"]
+    # Linear interpolation: z = z_start + (z_end - z_start) * (on / total_frames)
+    zoompan_z = f"{z_start}+({z_end}-{z_start})*on/{total_frames}"
+
+    # Build filter complex
+    # [0] = bg video, [1] = audio, [2] = text overlay, [3] = hook overlay (optional)
+    filters = []
+
+    # Background: darken (0.55 colorlevels for strong first-frame contrast),
+    # scale, crop, then apply Ken Burns zoom
+    filters.append(
+        f"[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"zoompan=z='{zoompan_z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d={total_frames}:s=1080x1920:fps={fps}[bg]"
+    )
+
+    # Text overlay: fade in at explanation_start (always visible from hook_time)
+    filters.append("[bg][2:v]overlay=0:0:enable='gte(t,{ht})'[main]".format(ht=total_hook_time))
+
+    if hook_overlay_path:
+        # Hook overlay: visible from frame 0, fades out at t=2
+        filters.append(
+            "[main][3:v]overlay=0:0:enable='lte(t,2)'[out]"
+        )
+        out_label = "[out]"
+    else:
+        out_label = "[main]"
+
+    # Audio normalization via loudnorm
+    filters.append(
+        "[1:a]loudnorm=I=-16:TP=-1.5:LRA=11[anorm]"
+    )
+
+    filter_complex = ";".join(filters)
+
     cmd = [
         "ffmpeg", "-y",
         "-stream_loop", "-1",
         "-i", bg_video,
         "-i", audio_file,
         "-i", overlay_path,
-        "-filter_complex",
-        "[0:v]colorlevels=romax=0.65:gomax=0.65:bomax=0.65,"
-        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg];"
-        "[bg][2:v]overlay=0:0[out]",
-        "-map", "[out]",
-        "-map", "1:a",
+    ]
+
+    if hook_overlay_path:
+        cmd.extend(["-i", hook_overlay_path])
+
+    cmd.extend([
+        "-filter_complex", filter_complex,
+        "-map", out_label,
+        "-map", "[anorm]",
         "-c:a", "aac",
         "-c:v", "libx264",
         "-preset", "fast",
         "-pix_fmt", "yuv420p",
-        "-t", "30",
+        "-t", str(video_duration),
         "-shortest",
         out_file
-    ]
+    ])
 
     print("Executing:", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=DATA_DIR)
     print(f"Video generated at {out_file}")
-    return out_file
+    return out_file, history
