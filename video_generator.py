@@ -388,26 +388,16 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     if audio_url_2:
         audio_file = concatenate_audio(audio_file, audio_url_2)
 
-    # Prepend randomized silence padding for hook phase (0.3–0.6s)
-    hook_silence = round(random.uniform(0.3, 0.6), 2)
-    # Add 2s for the hook display phase
-    total_hook_time = 2.0 + hook_silence
-    audio_file = prepend_silence(audio_file, total_hook_time)
-    print(f"[pacing] Hook phase: {total_hook_time:.2f}s (2s hook + {hook_silence}s silence)")
-
     # Get audio duration for dynamic video length
     audio_duration = get_audio_duration(audio_file)
     # Target 22-28s: audio + 4s for explanation tail
     video_duration = min(max(audio_duration + 4, 22), 30)
     print(f"[timing] Audio: {audio_duration:.1f}s → Video duration: {video_duration:.1f}s")
 
-    # Explanation appears at ~0:12-0:14 from start
-    explanation_start = round(random.uniform(12.0, 14.0), 1)
-
     # Subtitle offset (±20px safe zone)
     sub_offset = get_subtitle_offset()
 
-    # Ken Burns params
+    # Ken Burns params (logged for future use)
     kb = get_ken_burns_params()
     print(f"[fx] Ken Burns: {kb['direction']} zoom {kb['zoom_start']}→{kb['zoom_end']}")
 
@@ -436,11 +426,11 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]"
     )
 
-    # Text overlay: visible from after hook phase (Arabic + explanation + reference)
-    filters.append("[bg][2:v]overlay=0:0:enable='gte(t,{ht})'[main]".format(ht=total_hook_time))
+    # Text overlay: ALWAYS visible (Arabic subtitle + explanation + reference)
+    filters.append("[bg][2:v]overlay=0:0[main]")
 
     if hook_overlay_path:
-        # Hook overlay: visible from frame 0, disappears at t=2s
+        # Hook overlay: on top of everything for first 2 seconds only
         filters.append(
             "[main][3:v]overlay=0:0:enable='lte(t,2)'[out]"
         )
