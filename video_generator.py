@@ -426,33 +426,21 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     # ── Build FFmpeg command ──────────────────────────────────────
     print("Running FFmpeg...")
 
-    # Ken Burns zoom via zoompan (applied to background)
-    # zoompan: z interpolates from zoom_start to zoom_end over video_duration
-    fps = 30
-    total_frames = int(video_duration * fps)
-    z_start = kb["zoom_start"]
-    z_end = kb["zoom_end"]
-    # Linear interpolation: z = z_start + (z_end - z_start) * (on / total_frames)
-    zoompan_z = f"{z_start}+({z_end}-{z_start})*on/{total_frames}"
-
     # Build filter complex
     # [0] = bg video, [1] = audio, [2] = text overlay, [3] = hook overlay (optional)
     filters = []
 
-    # Background: darken (0.55 colorlevels for strong first-frame contrast),
-    # scale, crop, then apply Ken Burns zoom
+    # Background: darken (0.55 colorlevels for contrast), scale, crop to 1080x1920
     filters.append(
-        f"[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"zoompan=z='{zoompan_z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d={total_frames}:s=1080x1920:fps={fps}[bg]"
+        "[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]"
     )
 
-    # Text overlay: fade in at explanation_start (always visible from hook_time)
+    # Text overlay: visible from after hook phase (Arabic + explanation + reference)
     filters.append("[bg][2:v]overlay=0:0:enable='gte(t,{ht})'[main]".format(ht=total_hook_time))
 
     if hook_overlay_path:
-        # Hook overlay: visible from frame 0, fades out at t=2
+        # Hook overlay: visible from frame 0, disappears at t=2s
         filters.append(
             "[main][3:v]overlay=0:0:enable='lte(t,2)'[out]"
         )
