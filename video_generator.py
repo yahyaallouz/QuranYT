@@ -50,24 +50,53 @@ def download_audio_for_check(audio_url):
 
 
 def get_arabic_font_path():
-    """Find Amiri or another Arabic-capable font on the system."""
+    """Download and return the Amiri font for proper Qur'anic Arabic rendering.
+    Amiri has full tashkeel/diacritics support and works with RAQM/HarfBuzz."""
     import platform
     import glob
 
-    if platform.system() == "Windows":
-        for p in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/times.ttf"]:
-            if os.path.exists(p):
-                print(f"[font] Using: {p}")
-                return p
-    else:
+    # Try to use a cached Amiri font first
+    amiri_path = os.path.join(ASSETS_DIR, "Amiri-Regular.ttf")
+    if os.path.exists(amiri_path):
+        print(f"[font] Using cached Amiri: {amiri_path}")
+        return amiri_path
+
+    # Check system-installed Amiri (Linux, installed via fonts-hosny-amiri)
+    if platform.system() != "Windows":
         hits = glob.glob("/usr/share/fonts/**/Amiri*.ttf", recursive=True)
         if hits:
             for f in sorted(hits):
                 if "Regular" in f:
-                    print(f"[font] Using: {f}")
+                    print(f"[font] Using system Amiri: {f}")
                     return f
-            print(f"[font] Using: {hits[0]}")
+            print(f"[font] Using system Amiri: {hits[0]}")
             return hits[0]
+
+    # Auto-download Amiri font (works on all platforms)
+    print("[font] Downloading Amiri font for Arabic rendering...")
+    try:
+        url = "https://github.com/aliftype/amiri/releases/download/1.000/Amiri-1.000.zip"
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        import zipfile
+        import io
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            for name in zf.namelist():
+                if name.endswith("Amiri-Regular.ttf"):
+                    with open(amiri_path, "wb") as f:
+                        f.write(zf.read(name))
+                    print(f"[font] Downloaded Amiri: {amiri_path}")
+                    return amiri_path
+    except Exception as e:
+        print(f"[font] Amiri download failed: {e}")
+
+    # Fallback: try system Arabic fonts
+    if platform.system() == "Windows":
+        for p in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/times.ttf"]:
+            if os.path.exists(p):
+                print(f"[font] Fallback: {p}")
+                return p
+    else:
         for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]:
             if os.path.exists(p):
