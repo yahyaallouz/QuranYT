@@ -3,25 +3,29 @@
     "Your heart needs this right now",
     "Read this when you feel overwhelmed",
     "When hope feels far away…",
-    "This will calm your heart"
+    "This will calm your heart",
+    "These words will stay with you"
   ],
   "backgrounds": [
     33705666,
     35000871,
     34535421,
-    32036144
+    32036144,
+    30337023
   ],
   "bg_queries": [
     "clouds",
     "sunset",
     "desert dunes",
-    "sky"
+    "sky",
+    "mountains"
   ],
   "descriptions": [
     "This ayah is a gentle reminder.",
     "This verse carries deep meaning.",
     "A moment of calm from the Qur'an.",
-    "A reminder that and we ransomed him with a great sacrifice."
+    "A reminder that and we ransomed him with a great sacrifice.",
+    "May these words soften your heart."
   ],
   "last_post_timestamp": 0
 }

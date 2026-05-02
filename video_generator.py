@@ -20,13 +20,20 @@ os.makedirs(ASSETS_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Detect the best PIL layout engine available.
+# Check if the actual libraqm C library is installed (not just the enum).
 # ---------------------------------------------------------------------------
 try:
+    from PIL import features as _pil_features
+    _RAQM_AVAILABLE = _pil_features.check("raqm")
+except Exception:
+    _RAQM_AVAILABLE = False
+
+if _RAQM_AVAILABLE:
     _LAYOUT = ImageFont.Layout.RAQM
     print("[font] RAQM layout engine available ✓ (HarfBuzz Arabic shaping)")
-except AttributeError:
+else:
     _LAYOUT = ImageFont.Layout.BASIC
-    print("[font] RAQM not available, using BASIC layout")
+    print("[font] RAQM not available — using arabic_reshaper + bidi for shaping")
 
 
 def get_audio_duration(mp3_path):
@@ -208,19 +215,19 @@ def concatenate_audio(audio1_path, audio2_url):
 # ────────────────────────────────────────────────────────────────────────────
 
 def _reshape_arabic(text):
-    """Reshape + bidi-reorder Arabic text for display."""
-    if _LAYOUT == ImageFont.Layout.RAQM:
+    """Reshape + bidi-reorder Arabic text for display.
+    With RAQM (libraqm installed): HarfBuzz handles shaping natively — pass raw text.
+    Without RAQM: use arabic_reshaper + python-bidi for proper RTL connected letters."""
+    if _RAQM_AVAILABLE:
         return text
     else:
         try:
-            from arabic_reshaper import ArabicReshaper
+            import arabic_reshaper
             from bidi.algorithm import get_display
-            reshaper = ArabicReshaper(configuration={
-                'delete_harakat': False,
-                'delete_tatweel': False,
-            })
-            return get_display(reshaper.reshape(text))
+            reshaped = arabic_reshaper.reshape(text)
+            return get_display(reshaped)
         except ImportError:
+            print("[warning] arabic_reshaper/python-bidi not installed — Arabic may render incorrectly")
             return text
 
 
