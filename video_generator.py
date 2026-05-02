@@ -286,8 +286,8 @@ def render_hook_overlay(hook_text, font_path):
     lh = int(hook_size * 1.7)
     total_h = len(lines) * lh
 
-    # Position: top-third of screen (well above Arabic zone at ~40%)
-    text_center_y = int(H * 0.22)
+    # Position: bottom area (well below Arabic subtitle zone)
+    text_center_y = int(H * 0.75)
     y0 = text_center_y - total_h // 2
 
     # Soft gradient backdrop (dark → transparent, top-down)
@@ -437,13 +437,11 @@ def prepend_silence(audio_path, silence_sec):
 
 def generate_video(arabic_text, explanation_text, ref_text, audio_url,
                    audio_url_2=None, hook_text=None, history=None):
-    """Full pipeline: background + audio + 3 overlay layers → final_short.mp4
+    """Full pipeline: bg + audio + text overlay + hook overlay → final_short.mp4
 
-    Timing structure:
-      0:00 → hook_end        Hook overlay (2.3–2.8s, randomized)
-      hook_end → meaning_end English meaning overlay (4–5s total from start)
-      meaning_end+pad →      Arabic subtitle + recitation audio begins
-      last 0.5s              Fade-out for loop-friendly ending
+    Uses proven 4-input FFmpeg: [0]=bg, [1]=audio, [2]=text, [3]=hook.
+    Audio delayed via adelay filter (no file concat = no glitch).
+    Text overlay always visible. Hook on top for 2.3–2.8s.
     """
     pexels_key = os.environ.get("PEXELS_API_KEY")
     if not pexels_key:
@@ -463,38 +461,27 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     if audio_url_2:
         audio_file = concatenate_audio(audio_file, audio_url_2)
 
-    # ── Timing calculations ──────────────────────────────────────
-    hook_duration = round(random.uniform(2.3, 2.8), 2)
-    meaning_end = round(random.uniform(4.0, 5.0), 1)  # meaning visible until this time
-    silence_pad = round(random.uniform(0.3, 0.6), 2)  # gap between meaning and recitation
-    recitation_start = round(meaning_end + silence_pad, 2)
-
-    print(f"[timing] Hook: 0–{hook_duration}s | "
-          f"Meaning: 0–{meaning_end}s | "
-          f"Silence pad: {silence_pad}s | "
-          f"Recitation starts: {recitation_start}s")
-
-    # Prepend silence so audio aligns with recitation_start
-    audio_file = prepend_silence(audio_file, recitation_start)
-
-    # Get audio duration (with silence prepended)
+    # Raw audio duration (before delay)
     audio_duration = get_audio_duration(audio_file)
+
+    # ── Timing ───────────────────────────────────────────────────
+    hook_duration = round(random.uniform(2.3, 2.8), 2)
+    silence_pad = round(random.uniform(0.3, 0.6), 2)
+    delay_ms = int((hook_duration + silence_pad) * 1000)  # adelay in ms
+
+    print(f"[timing] Hook: 0–{hook_duration}s | Audio delay: {delay_ms}ms")
+
     # Target 17–23s total
-    video_duration = min(max(audio_duration + 2, 17), 23)
-    print(f"[timing] Audio (padded): {audio_duration:.1f}s → Video: {video_duration:.1f}s")
+    video_duration = min(max(audio_duration + (delay_ms / 1000) + 2, 17), 23)
+    print(f"[timing] Audio: {audio_duration:.1f}s → Video: {video_duration:.1f}s")
 
-    # Subtitle offset (±20px safe zone)
     sub_offset = get_subtitle_offset()
-
-    # Ken Burns (logged for reference)
     kb = get_ken_burns_params()
     print(f"[fx] Ken Burns: {kb['direction']} zoom {kb['zoom_start']}→{kb['zoom_end']}")
 
     # ── Render overlays ──────────────────────────────────────────
-    arabic_overlay = render_arabic_overlay(arabic_text, ref_text,
-                                           font_path, subtitle_offset=sub_offset)
-    explanation_overlay = render_explanation_overlay(explanation_text, font_path)
-
+    overlay_path = render_arabic_overlay(arabic_text, ref_text,
+                                         font_path, subtitle_offset=sub_offset)
     hook_overlay = None
     if hook_text:
         hook_overlay = render_hook_overlay(hook_text, font_path)
@@ -503,53 +490,43 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     if os.path.exists(out_file):
         os.remove(out_file)
 
-    # ── Build FFmpeg filter chain ────────────────────────────────
+    # ── Build FFmpeg — PROVEN 4-input pattern ──────────────────────
     print("Running FFmpeg...")
 
-    fade_start = round(video_duration - 0.5, 2)
+    # [0]=bg, [1]=audio, [2]=text overlay, [3]=hook overlay (optional)
     filters = []
 
-    # Background: darken, scale, crop, fade-out at end
+    # Background: darken, scale, crop
     filters.append(
-        f"[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"fade=t=out:st={fade_start}:d=0.5[bg]"
+        "[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]"
     )
 
-    # Layer 1: Arabic subtitle — appears when recitation starts
-    filters.append(
-        f"[bg][2:v]overlay=0:0:enable='gte(t,{recitation_start})'[v1]"
-    )
-
-    # Layer 2: English meaning — visible from 0 to meaning_end
-    filters.append(
-        f"[v1][3:v]overlay=0:0:enable='lte(t,{meaning_end})'[v2]"
-    )
+    # Text overlay: ALWAYS visible (Arabic + reference)
+    filters.append("[bg][2:v]overlay=0:0[main]")
 
     if hook_overlay:
-        # Layer 3: Hook — visible from frame 0 to hook_duration
+        # Hook: visible from frame 0 to hook_duration
         filters.append(
-            f"[v2][4:v]overlay=0:0:enable='lte(t,{hook_duration})'[out]"
+            f"[main][3:v]overlay=0:0:enable='lte(t,{hook_duration})'[out]"
         )
         out_label = "[out]"
     else:
-        out_label = "[v2]"
+        out_label = "[main]"
 
-    # Audio normalization via loudnorm
+    # Audio: delay start (no file concat = no glitch), then normalize
     filters.append(
-        "[1:a]loudnorm=I=-16:TP=-1.5:LRA=11[anorm]"
+        f"[1:a]adelay={delay_ms}|{delay_ms},loudnorm=I=-16:TP=-1.5:LRA=11[anorm]"
     )
 
     filter_complex = ";".join(filters)
 
-    # Inputs: [0]=bg, [1]=audio, [2]=arabic, [3]=explanation, [4]=hook (optional)
     cmd = [
         "ffmpeg", "-y",
         "-stream_loop", "-1",
         "-i", bg_video,
         "-i", audio_file,
-        "-i", arabic_overlay,
-        "-i", explanation_overlay,
+        "-i", overlay_path,
     ]
 
     if hook_overlay:
