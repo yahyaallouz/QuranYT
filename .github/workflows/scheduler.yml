@@ -25,17 +25,17 @@ jobs:
 
       - name: Install FFmpeg, fonts, and Arabic shaping libraries
         run: |
-          # Retry apt-get update with fallback mirror (Azure mirrors can have DNS issues)
+          # Fix Azure mirror DNS issues on GitHub Actions (swap to archive.ubuntu.com immediately)
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           for i in 1 2 3; do
             sudo apt-get update && break
-            echo "apt-get update failed (attempt $i/3), switching to fallback mirror..."
-            sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list || true
-            sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
-            sleep 5
+            echo "apt-get update failed (attempt $i/3), retrying in 10s..."
+            sleep 10
           done
           sudo apt-get install -y ffmpeg fontconfig fonts-hosny-amiri libraqm-dev libfribidi-dev
           fc-cache -fv
-          # Reinstall Pillow so it picks up libraqm for RAQM layout engine
           pip install --force-reinstall Pillow
 
       - name: Setup Secrets
