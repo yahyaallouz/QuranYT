@@ -266,33 +266,47 @@ def _wrap_arabic(text, font, draw, max_width):
 
 
 def render_hook_overlay(hook_text, font_path):
-    """Render the hook text as a centered transparent 1080×1920 PNG.
-    Full opacity — no gradual fade (first-frame readability)."""
+    """Render the hook text with a soft dark gradient backdrop.
+    Positioned at top-third to avoid Arabic subtitle zone.
+    Full opacity from frame 0 — no fade-in delay."""
     print(f"Rendering hook overlay: '{hook_text}'")
     W, H = 1080, 1920
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     eng_font_path = download_english_font()
-    hook_size = 52
+    hook_size = 54
     try:
         hook_font = ImageFont.truetype(eng_font_path or font_path, hook_size)
     except Exception:
         hook_font = ImageFont.truetype(font_path, hook_size)
 
     # Wrap if needed
-    lines = textwrap.wrap(hook_text, width=28)
-    lh = int(hook_size * 1.6)
+    lines = textwrap.wrap(hook_text, width=26)
+    lh = int(hook_size * 1.7)
     total_h = len(lines) * lh
-    y0 = (H // 2) - total_h // 2  # center vertically
+
+    # Position: top-third of screen (well above Arabic zone at ~40%)
+    text_center_y = int(H * 0.22)
+    y0 = text_center_y - total_h // 2
+
+    # Soft gradient backdrop (dark → transparent, top-down)
+    gradient_top = max(0, y0 - 80)
+    gradient_bottom = y0 + total_h + 80
+    for gy in range(gradient_top, min(gradient_bottom, H)):
+        # Smooth falloff from center of text
+        dist_from_center = abs(gy - text_center_y) / (total_h // 2 + 80)
+        alpha = int(120 * max(0, 1.0 - dist_from_center ** 1.5))
+        draw.rectangle([(0, gy), (W, gy + 1)], fill=(0, 0, 0, alpha))
 
     for i, line in enumerate(lines):
         y = y0 + i * lh
         bbox = draw.textbbox((0, 0), line, font=hook_font)
         tw = bbox[2] - bbox[0]
         x = (W - tw) // 2
-        # Strong shadow for readability
-        draw.text((x + 3, y + 3), line, font=hook_font, fill=(0, 0, 0, 220))
+        # Double shadow for strong readability
+        draw.text((x + 3, y + 3), line, font=hook_font, fill=(0, 0, 0, 230))
+        draw.text((x + 1, y + 1), line, font=hook_font, fill=(0, 0, 0, 160))
         draw.text((x, y), line, font=hook_font, fill=(255, 255, 255, 255))
 
     path = os.path.join(ASSETS_DIR, "hook_overlay.png")
@@ -300,16 +314,15 @@ def render_hook_overlay(hook_text, font_path):
     return path
 
 
-def render_text_overlay(arabic_text, explanation_text, ref_text, font_path,
-                        subtitle_offset=0):
-    """Render Arabic + English text onto a transparent 1080×1920 PNG.
-    subtitle_offset shifts Arabic text vertically (±20px safe zone)."""
-    print("Rendering text overlay image with PIL...")
+def render_arabic_overlay(arabic_text, ref_text, font_path, subtitle_offset=0):
+    """Render Arabic ayah + surah reference onto a transparent 1080×1920 PNG.
+    ⚠️ LOCKED — Arabic rendering must remain pixel-identical. Do NOT modify."""
+    print("Rendering Arabic overlay (LOCKED rendering)...")
     W, H = 1080, 1920
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ── Arabic ──────────────────────────────────────────────────
+    # ── Arabic (LOCKED — do not change font, size, position, style) ──
     ar_size = 72
     ar_font = ImageFont.truetype(font_path, ar_size, layout_engine=_LAYOUT)
     max_w = W - 140
@@ -331,7 +344,33 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path,
         draw.text((x + 3, y + 3), line, font=ar_font, fill=(0, 0, 0, 190))
         draw.text((x, y), line, font=ar_font, fill=(255, 255, 255, 255))
 
-    # ── English explanation ─────────────────────────────────────
+    # ── Surah reference (LOCKED) ─────────────────────────────────
+    eng_font_path = download_english_font()
+    ref_size = 32
+    try:
+        ref_font = ImageFont.truetype(eng_font_path or font_path, ref_size)
+    except Exception:
+        ref_font = ImageFont.truetype(font_path, ref_size)
+    ref_bbox = draw.textbbox((0, 0), ref_text, font=ref_font)
+    ref_x = (W - (ref_bbox[2] - ref_bbox[0])) // 2
+    ref_y = int(H * 0.88)
+    draw.text((ref_x + 2, ref_y + 2), ref_text, font=ref_font, fill=(0, 0, 0, 120))
+    draw.text((ref_x, ref_y), ref_text, font=ref_font, fill=(180, 180, 180, 255))
+
+    overlay_path = os.path.join(ASSETS_DIR, "arabic_overlay.png")
+    img.save(overlay_path, "PNG")
+    print(f"Arabic overlay saved: {overlay_path}")
+    return overlay_path
+
+
+def render_explanation_overlay(explanation_text, font_path):
+    """Render English explanation onto a transparent 1080×1920 PNG.
+    Positioned at 60% height, separate from Arabic zone."""
+    print(f"Rendering explanation overlay: '{explanation_text[:50]}...'")
+    W, H = 1080, 1920
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
     eng_font_path = download_english_font()
     eng_size = 36
     try:
@@ -351,21 +390,9 @@ def render_text_overlay(arabic_text, explanation_text, ref_text, font_path,
         draw.text((x + 2, y + 2), line, font=eng_font, fill=(0, 0, 0, 150))
         draw.text((x, y), line, font=eng_font, fill=(230, 230, 230, 255))
 
-    # ── Surah reference ─────────────────────────────────────────
-    ref_size = 32
-    try:
-        ref_font = eng_font.font_variant(size=ref_size)
-    except Exception:
-        ref_font = ImageFont.truetype(font_path, ref_size)
-    ref_bbox = draw.textbbox((0, 0), ref_text, font=ref_font)
-    ref_x = (W - (ref_bbox[2] - ref_bbox[0])) // 2
-    ref_y = int(H * 0.88)
-    draw.text((ref_x + 2, ref_y + 2), ref_text, font=ref_font, fill=(0, 0, 0, 120))
-    draw.text((ref_x, ref_y), ref_text, font=ref_font, fill=(180, 180, 180, 255))
-
-    overlay_path = os.path.join(ASSETS_DIR, "text_overlay.png")
+    overlay_path = os.path.join(ASSETS_DIR, "explanation_overlay.png")
     img.save(overlay_path, "PNG")
-    print(f"Text overlay saved: {overlay_path}")
+    print(f"Explanation overlay saved: {overlay_path}")
     return overlay_path
 
 
@@ -410,7 +437,14 @@ def prepend_silence(audio_path, silence_sec):
 
 def generate_video(arabic_text, explanation_text, ref_text, audio_url,
                    audio_url_2=None, hook_text=None, history=None):
-    """Full pipeline: background + audio + hook overlay + text overlay → final_short.mp4"""
+    """Full pipeline: background + audio + 3 overlay layers → final_short.mp4
+
+    Timing structure:
+      0:00 → hook_end        Hook overlay (2.3–2.8s, randomized)
+      hook_end → meaning_end English meaning overlay (4–5s total from start)
+      meaning_end+pad →      Arabic subtitle + recitation audio begins
+      last 0.5s              Fade-out for loop-friendly ending
+    """
     pexels_key = os.environ.get("PEXELS_API_KEY")
     if not pexels_key:
         raise Exception("PEXELS_API_KEY environment variable is missing!")
@@ -429,55 +463,77 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     if audio_url_2:
         audio_file = concatenate_audio(audio_file, audio_url_2)
 
-    # Get audio duration for dynamic video length
+    # ── Timing calculations ──────────────────────────────────────
+    hook_duration = round(random.uniform(2.3, 2.8), 2)
+    meaning_end = round(random.uniform(4.0, 5.0), 1)  # meaning visible until this time
+    silence_pad = round(random.uniform(0.3, 0.6), 2)  # gap between meaning and recitation
+    recitation_start = round(meaning_end + silence_pad, 2)
+
+    print(f"[timing] Hook: 0–{hook_duration}s | "
+          f"Meaning: 0–{meaning_end}s | "
+          f"Silence pad: {silence_pad}s | "
+          f"Recitation starts: {recitation_start}s")
+
+    # Prepend silence so audio aligns with recitation_start
+    audio_file = prepend_silence(audio_file, recitation_start)
+
+    # Get audio duration (with silence prepended)
     audio_duration = get_audio_duration(audio_file)
-    # Target 22-28s: audio + 4s for explanation tail
-    video_duration = min(max(audio_duration + 4, 22), 30)
-    print(f"[timing] Audio: {audio_duration:.1f}s → Video duration: {video_duration:.1f}s")
+    # Target 17–23s total
+    video_duration = min(max(audio_duration + 2, 17), 23)
+    print(f"[timing] Audio (padded): {audio_duration:.1f}s → Video: {video_duration:.1f}s")
 
     # Subtitle offset (±20px safe zone)
     sub_offset = get_subtitle_offset()
 
-    # Ken Burns params (logged for future use)
+    # Ken Burns (logged for reference)
     kb = get_ken_burns_params()
     print(f"[fx] Ken Burns: {kb['direction']} zoom {kb['zoom_start']}→{kb['zoom_end']}")
 
-    # Render overlays
-    overlay_path = render_text_overlay(arabic_text, explanation_text, ref_text,
-                                       font_path, subtitle_offset=sub_offset)
+    # ── Render overlays ──────────────────────────────────────────
+    arabic_overlay = render_arabic_overlay(arabic_text, ref_text,
+                                           font_path, subtitle_offset=sub_offset)
+    explanation_overlay = render_explanation_overlay(explanation_text, font_path)
 
-    hook_overlay_path = None
+    hook_overlay = None
     if hook_text:
-        hook_overlay_path = render_hook_overlay(hook_text, font_path)
+        hook_overlay = render_hook_overlay(hook_text, font_path)
 
     out_file = os.path.join(ASSETS_DIR, "final_short.mp4")
     if os.path.exists(out_file):
         os.remove(out_file)
 
-    # ── Build FFmpeg command ──────────────────────────────────────
+    # ── Build FFmpeg filter chain ────────────────────────────────
     print("Running FFmpeg...")
 
-    # Build filter complex
-    # [0] = bg video, [1] = audio, [2] = text overlay, [3] = hook overlay (optional)
+    fade_start = round(video_duration - 0.5, 2)
     filters = []
 
-    # Background: darken (0.55 colorlevels for contrast), scale, crop to 1080x1920
+    # Background: darken, scale, crop, fade-out at end
     filters.append(
-        "[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
-        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]"
+        f"[0:v]colorlevels=romax=0.55:gomax=0.55:bomax=0.55,"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"fade=t=out:st={fade_start}:d=0.5[bg]"
     )
 
-    # Text overlay: ALWAYS visible (Arabic subtitle + explanation + reference)
-    filters.append("[bg][2:v]overlay=0:0[main]")
+    # Layer 1: Arabic subtitle — appears when recitation starts
+    filters.append(
+        f"[bg][2:v]overlay=0:0:enable='gte(t,{recitation_start})'[v1]"
+    )
 
-    if hook_overlay_path:
-        # Hook overlay: on top of everything for first 2 seconds only
+    # Layer 2: English meaning — visible from 0 to meaning_end
+    filters.append(
+        f"[v1][3:v]overlay=0:0:enable='lte(t,{meaning_end})'[v2]"
+    )
+
+    if hook_overlay:
+        # Layer 3: Hook — visible from frame 0 to hook_duration
         filters.append(
-            "[main][3:v]overlay=0:0:enable='lte(t,2)'[out]"
+            f"[v2][4:v]overlay=0:0:enable='lte(t,{hook_duration})'[out]"
         )
         out_label = "[out]"
     else:
-        out_label = "[main]"
+        out_label = "[v2]"
 
     # Audio normalization via loudnorm
     filters.append(
@@ -486,16 +542,18 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
 
     filter_complex = ";".join(filters)
 
+    # Inputs: [0]=bg, [1]=audio, [2]=arabic, [3]=explanation, [4]=hook (optional)
     cmd = [
         "ffmpeg", "-y",
         "-stream_loop", "-1",
         "-i", bg_video,
         "-i", audio_file,
-        "-i", overlay_path,
+        "-i", arabic_overlay,
+        "-i", explanation_overlay,
     ]
 
-    if hook_overlay_path:
-        cmd.extend(["-i", hook_overlay_path])
+    if hook_overlay:
+        cmd.extend(["-i", hook_overlay])
 
     cmd.extend([
         "-filter_complex", filter_complex,
@@ -514,3 +572,4 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     subprocess.run(cmd, check=True, cwd=DATA_DIR)
     print(f"Video generated at {out_file}")
     return out_file, history
+

@@ -204,7 +204,7 @@ def main():
         cleanup_files = [
             "bg.mp4", "audio.mp3", "audio2.mp3", "audio_combined.mp3",
             "audio_padded.mp3", "silence.mp3", "subtitles.ass",
-            "hook_overlay.png", "text_overlay.png",
+            "hook_overlay.png", "arabic_overlay.png", "explanation_overlay.png",
         ]
         if not is_dry and 'video_path' in locals():
             cleanup_files.append("final_short.mp4")
