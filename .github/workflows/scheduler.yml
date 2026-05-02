@@ -25,15 +25,13 @@ jobs:
 
       - name: Install FFmpeg, fonts, and Arabic shaping libraries
         run: |
-          # Fix Azure mirror DNS issues on GitHub Actions (swap to archive.ubuntu.com immediately)
+          # Fix Azure mirror DNS issues on GitHub Actions
+          # The runner uses /etc/apt/apt-mirrors.txt as the mirror list
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
           sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
           sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
           sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-          for i in 1 2 3; do
-            sudo apt-get update && break
-            echo "apt-get update failed (attempt $i/3), retrying in 10s..."
-            sleep 10
-          done
+          sudo apt-get update -y
           sudo apt-get install -y ffmpeg fontconfig fonts-hosny-amiri libraqm-dev libfribidi-dev
           fc-cache -fv
           pip install --force-reinstall Pillow
