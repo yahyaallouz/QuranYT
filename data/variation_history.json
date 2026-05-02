@@ -1,14 +1,15 @@
 {
   "hooks": [
-    "Your heart needs this right now",
-    "Read this when you feel overwhelmed",
     "When hope feels far away…",
     "This will calm your heart",
     "These words will stay with you",
     "Allah says something powerful here",
     "A promise from Allah to you",
     "Allah's words of comfort",
-    "When you feel lost… read this"
+    "When you feel lost… read this",
+    "This is your sign to keep going",
+    "Listen with your heart",
+    "A reminder you need today"
   ],
   "backgrounds": [
     33705666,
@@ -19,7 +20,10 @@
     12640160,
     32340120,
     34346389,
-    13145704
+    13145704,
+    30332161,
+    19402858,
+    36311930
   ],
   "bg_queries": [
     "clouds",
@@ -30,7 +34,10 @@
     "night sky",
     "rain",
     "forest",
-    "calm lake"
+    "calm lake",
+    "ocean",
+    "waterfall",
+    "river"
   ],
   "descriptions": [
     "This ayah is a gentle reminder.",
@@ -41,7 +48,10 @@
     "Your heart was meant to hear this.",
     "A reminder that but they had not been sent as guardians over them.",
     "A reminder that [it is but] a small enjoyment; then their [fina....",
-    "Feel the peace in these words."
+    "Feel the peace in these words.",
+    "Reflect on this beautiful ayah.",
+    "Take a moment and reflect.",
+    "Let this verse bring you peace."
   ],
   "last_post_timestamp": 0
 }

@@ -186,20 +186,32 @@ def fetch_pexels_video(api_key, history=None):
     return vid_path, history
 
 
-def concatenate_audio(audio1_path, audio2_url):
-    """Download second audio and concatenate both into audio_combined.mp3."""
-    audio2_path = os.path.join(ASSETS_DIR, "audio2.mp3")
-    print("Downloading second ayah audio...")
-    r = requests.get(audio2_url, timeout=30)
-    r.raise_for_status()
-    with open(audio2_path, "wb") as f:
-        f.write(r.content)
+def concatenate_audio(audio_urls):
+    """Download and concatenate multiple audio files.
+    Returns: (combined_path, list_of_individual_durations)
+    """
+    audio_paths = []
+    durations = []
+    for i, url in enumerate(audio_urls):
+        path = os.path.join(ASSETS_DIR, f"audio_{i}.mp3")
+        print(f"Downloading audio {i+1}/{len(audio_urls)}...")
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(r.content)
+        audio_paths.append(path)
+        dur = get_audio_duration(path)
+        durations.append(dur)
+        print(f"  → ayah {i+1} duration: {dur:.1f}s")
+
+    if len(audio_paths) == 1:
+        return audio_paths[0], durations
 
     combined_path = os.path.join(ASSETS_DIR, "audio_combined.mp3")
     concat_list = os.path.join(ASSETS_DIR, "concat.txt")
     with open(concat_list, "w") as f:
-        f.write(f"file '{audio1_path}'\n")
-        f.write(f"file '{audio2_path}'\n")
+        for p in audio_paths:
+            f.write(f"file '{p}'\n")
 
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -207,7 +219,7 @@ def concatenate_audio(audio1_path, audio2_url):
     ], check=True, capture_output=True)
 
     os.remove(concat_list)
-    return combined_path
+    return combined_path, durations
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -395,6 +407,148 @@ def render_explanation_overlay(explanation_text, font_path):
     print(f"Explanation overlay saved: {overlay_path}")
     return overlay_path
 
+# ────────────────────────────────────────────────────────────────────────────
+#  ANIMATED SUBTITLE OVERLAY  (spring line-by-line reveal)
+# ────────────────────────────────────────────────────────────────────────────
+
+def render_animated_subtitle_video(arabic_text, ref_text, font_path,
+                                    ayah_durations, subtitle_offset=0):
+    """Render ONE-AYAH-AT-A-TIME animation as a transparent WebM.
+
+    Each ayah: fade-in (250ms) → visible during recitation → fade-out (250ms)
+    Then 200ms gap before next ayah. Arabic LOCKED styling.
+    ayah_durations: list of per-ayah audio durations in seconds.
+    """
+    import shutil
+    print("Rendering animated subtitle video (one ayah at a time)...")
+    W, H = 1080, 1920
+    FPS = 24
+    FADE_SEC = 0.25
+    GAP_SEC = 0.2
+    fade_frames = max(1, int(FADE_SEC * FPS))
+
+    ar_size = 72
+    ar_font = ImageFont.truetype(font_path, ar_size, layout_engine=_LAYOUT)
+    max_w = W - 140
+
+    temp_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    temp_draw = ImageDraw.Draw(temp_img)
+
+    # Group wrapped lines per ayah
+    ayah_parts = arabic_text.split("\n")
+    ayah_line_groups = []
+    for part in ayah_parts:
+        lines = _wrap_arabic(part, ar_font, temp_draw, max_w)
+        ayah_line_groups.append(lines)
+
+    num_ayahs = len(ayah_line_groups)
+    while len(ayah_durations) < num_ayahs:
+        ayah_durations.append(ayah_durations[-1] if ayah_durations else 5.0)
+
+    # Build timeline
+    timeline = []
+    cursor = 0.0
+    for i in range(num_ayahs):
+        start = cursor
+        end = cursor + ayah_durations[i]
+        timeline.append((start, end))
+        cursor = end + GAP_SEC
+        print(f"[anim] Ayah {i+1}: {start:.2f}s → {end:.2f}s "
+              f"({len(ayah_line_groups[i])} lines)")
+
+    total_duration = cursor
+    total_frames = int(total_duration * FPS)
+
+    eng_font_path = download_english_font()
+    ref_size = 32
+    try:
+        ref_font = ImageFont.truetype(eng_font_path or font_path, ref_size)
+    except Exception:
+        ref_font = ImageFont.truetype(font_path, ref_size)
+
+    lh_ar = int(ar_size * 2.4)
+    center_y = int(H * 0.35) + subtitle_offset
+
+    ayah_line_widths = []
+    for group in ayah_line_groups:
+        widths = []
+        for line in group:
+            bbox = temp_draw.textbbox((0, 0), line, font=ar_font)
+            widths.append(bbox[2] - bbox[0])
+        ayah_line_widths.append(widths)
+
+    # ── Generate frames ──────────────────────────────────────────
+    frames_dir = os.path.join(ASSETS_DIR, "subtitle_frames")
+    if os.path.exists(frames_dir):
+        shutil.rmtree(frames_dir)
+    os.makedirs(frames_dir)
+
+    print(f"[anim] Generating {total_frames} frames @ {FPS}fps "
+          f"({total_duration:.1f}s)...")
+
+    for frame_idx in range(total_frames):
+        t = frame_idx / FPS
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Find which ayah is active at time t
+        active_ayah = -1
+        for i, (start, end) in enumerate(timeline):
+            if start <= t <= end:
+                active_ayah = i
+                break
+
+        if active_ayah >= 0:
+            start, end = timeline[active_ayah]
+            lines = ayah_line_groups[active_ayah]
+            widths = ayah_line_widths[active_ayah]
+
+            # Calculate fade alpha
+            time_in = t - start
+            time_to_end = end - t
+            if time_in < FADE_SEC:
+                alpha_frac = time_in / FADE_SEC
+            elif time_to_end < FADE_SEC:
+                alpha_frac = time_to_end / FADE_SEC
+            else:
+                alpha_frac = 1.0
+
+            alpha = int(255 * alpha_frac)
+            shadow_alpha = int(190 * alpha_frac)
+            slide = int(10 * (1.0 - min(1.0, time_in / FADE_SEC)))
+
+            # Center the ayah block vertically
+            block_h = len(lines) * lh_ar
+            y0 = center_y - block_h // 2 + slide
+
+            # Draw each line of this ayah (LOCKED style)
+            for j, line in enumerate(lines):
+                x = (W - widths[j]) // 2
+                y = y0 + j * lh_ar
+                draw.text((x + 3, y + 3), line, font=ar_font,
+                          fill=(0, 0, 0, shadow_alpha))
+                draw.text((x, y), line, font=ar_font,
+                          fill=(255, 255, 255, alpha))
+
+        # Surah reference (always visible)
+        ref_bbox = draw.textbbox((0, 0), ref_text, font=ref_font)
+        ref_x = (W - (ref_bbox[2] - ref_bbox[0])) // 2
+        ref_y = int(H * 0.88)
+        draw.text((ref_x + 2, ref_y + 2), ref_text, font=ref_font,
+                  fill=(0, 0, 0, 120))
+        draw.text((ref_x, ref_y), ref_text, font=ref_font,
+                  fill=(180, 180, 180, 255))
+
+        frame_path = os.path.join(frames_dir, f"frame_{frame_idx:04d}.png")
+        img.save(frame_path, "PNG")
+
+    print(f"[anim] Rendered {total_frames} frames")
+
+    # Return frames pattern for FFmpeg (PNGs have correct alpha natively)
+    frames_pattern = os.path.join(frames_dir, "frame_%04d.png")
+    print(f"[anim] Subtitle frames ready: {frames_pattern}")
+    return frames_pattern, FPS
+
 
 # ────────────────────────────────────────────────────────────────────────────
 #  SILENCE PADDING
@@ -435,13 +589,13 @@ def prepend_silence(audio_path, silence_sec):
 #  MAIN VIDEO GENERATION PIPELINE
 # ────────────────────────────────────────────────────────────────────────────
 
-def generate_video(arabic_text, explanation_text, ref_text, audio_url,
-                   audio_url_2=None, hook_text=None, history=None):
-    """Full pipeline: bg + audio + text overlay + hook overlay → final_short.mp4
+def generate_video(arabic_text, explanation_text, ref_text, audio_urls,
+                   hook_text=None, history=None):
+    """Full pipeline: bg + audio + animated subtitle + hook → final_short.mp4
 
-    Uses proven 4-input FFmpeg: [0]=bg, [1]=audio, [2]=text, [3]=hook.
-    Audio delayed via adelay filter (no file concat = no glitch).
-    Text overlay always visible. Hook on top for 2.3–2.8s.
+    Uses proven 4-input FFmpeg: [0]=bg, [1]=audio, [2]=subtitle_anim, [3]=hook.
+    Subtitle is an animated WebM with line-by-line spring reveal.
+    Audio delayed via adelay filter. Hook on top for 2.3–2.8s.
     """
     pexels_key = os.environ.get("PEXELS_API_KEY")
     if not pexels_key:
@@ -453,16 +607,11 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     font_path = get_arabic_font_path()
     bg_video, history = fetch_pexels_video(pexels_key, history=history)
 
-    # Audio (already downloaded by main.py for duration check)
-    audio_file = os.path.join(ASSETS_DIR, "audio.mp3")
-    if not os.path.exists(audio_file):
-        download_audio_for_check(audio_url)
+    # Download and concatenate all audio files
+    audio_file, ayah_durations = concatenate_audio(audio_urls)
 
-    if audio_url_2:
-        audio_file = concatenate_audio(audio_file, audio_url_2)
-
-    # Raw audio duration (before delay)
-    audio_duration = get_audio_duration(audio_file)
+    # Total audio duration (before delay)
+    audio_duration = sum(ayah_durations)
 
     # ── Timing ───────────────────────────────────────────────────
     hook_duration = round(random.uniform(2.3, 2.8), 2)
@@ -471,8 +620,8 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
 
     print(f"[timing] Hook: 0–{hook_duration}s | Audio delay: {delay_ms}ms")
 
-    # Target 17–23s total
-    video_duration = min(max(audio_duration + (delay_ms / 1000) + 2, 17), 23)
+    # NO hard cap — video runs until all ayahs complete
+    video_duration = round(audio_duration + (delay_ms / 1000) + 1, 1)
     print(f"[timing] Audio: {audio_duration:.1f}s → Video: {video_duration:.1f}s")
 
     sub_offset = get_subtitle_offset()
@@ -480,8 +629,11 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
     print(f"[fx] Ken Burns: {kb['direction']} zoom {kb['zoom_start']}→{kb['zoom_end']}")
 
     # ── Render overlays ──────────────────────────────────────────
-    overlay_path = render_arabic_overlay(arabic_text, ref_text,
-                                         font_path, subtitle_offset=sub_offset)
+    # Animated subtitle: one ayah at a time, synced to actual recitation
+    # Returns (frames_pattern, fps) for direct PNG sequence input
+    frames_pattern, sub_fps = render_animated_subtitle_video(
+        arabic_text, ref_text, font_path,
+        ayah_durations, subtitle_offset=sub_offset)
     hook_overlay = None
     if hook_text:
         hook_overlay = render_hook_overlay(hook_text, font_path)
@@ -526,7 +678,8 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_url,
         "-stream_loop", "-1",
         "-i", bg_video,
         "-i", audio_file,
-        "-i", overlay_path,
+        "-framerate", str(sub_fps),
+        "-i", frames_pattern,
     ]
 
     if hook_overlay:

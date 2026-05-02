@@ -71,8 +71,8 @@ def build_ayah_index(quran):
 
 def select_ayahs():
     """
-    Select one or two consecutive same-surah ayahs.
-    Prefers ayahs producing 10-25s audio (ideal for 22-28s video with hook+explanation).
+    Select up to 4 consecutive same-surah ayahs.
+    Targets ~20-30s audio (ideal for 28-32s video with hook).
     """
     quran = load_json(QURAN_PATH)
     used = load_json(USED_AYAHS_PATH)
@@ -87,14 +87,14 @@ def select_ayahs():
         used_set = set()
         available = quran
 
-    # Prefer shorter ayahs (<120 chars) suitable for Shorts
-    short_available = [a for a in available if a['character_count'] < 120]
+    # Prefer shorter ayahs suitable for Shorts
+    short_available = [a for a in available if a['character_count'] < 200]
     pool = short_available if short_available else available
     selected = random.choice(pool)
 
     os.makedirs(ASSETS_DIR, exist_ok=True)
 
-    # Check audio duration
+    # Check audio duration of first ayah
     mp3_path = download_audio_for_check(selected["audio_url"])
     duration = get_audio_duration(mp3_path)
     print(f"Ayah duration: {duration:.1f}s")
@@ -102,18 +102,18 @@ def select_ayahs():
     ayahs = [selected]
     ids_to_mark = [f"{selected['surah_number']}:{selected['ayah_number']}"]
 
-    if duration < 8:
-        # Try combining with next ayah in same surah
-        next_key = (selected["surah_number"], selected["ayah_number"] + 1)
+    # Collect up to 3 more consecutive ayahs from the same surah
+    for offset in range(1, 4):
+        next_key = (selected["surah_number"], selected["ayah_number"] + offset)
         next_ayah = ayah_index.get(next_key)
         if next_ayah:
-            print(f"Ayah too short ({duration:.1f}s), combining with next: {next_key}")
             next_id = f"{next_ayah['surah_number']}:{next_ayah['ayah_number']}"
             ayahs.append(next_ayah)
             ids_to_mark.append(next_id)
         else:
-            print("No next ayah in same surah, using single ayah as-is.")
+            break
 
+    print(f"Selected {len(ayahs)} ayahs: {ids_to_mark}")
     return ayahs, ids_to_mark
 
 
@@ -141,20 +141,12 @@ def main():
     surah_num = ayahs[0]['surah_number']
     surah_name = ayahs[0]['surah_name_en']
 
-    if len(ayahs) == 2:
-        ayah_range = f"{ayahs[0]['ayah_number']}-{ayahs[1]['ayah_number']}"
-        arabic_text = ayahs[0]['arabic_text'] + "\n" + ayahs[1]['arabic_text']
-        combined_translation = ayahs[0]['english_translation'] + " " + ayahs[1]['english_translation']
-        ref_text = f"Surah {surah_name} [{surah_num}:{ayah_range}]"
-        audio_url = ayahs[0]['audio_url']
-        audio_url_2 = ayahs[1]['audio_url']
-    else:
-        ayah_range = str(ayahs[0]['ayah_number'])
-        arabic_text = ayahs[0]['arabic_text']
-        combined_translation = ayahs[0]['english_translation']
-        ref_text = f"Surah {surah_name} [{surah_num}:{ayah_range}]"
-        audio_url = ayahs[0]['audio_url']
-        audio_url_2 = None
+    # Build combined text and audio for all selected ayahs
+    ayah_range = f"{ayahs[0]['ayah_number']}-{ayahs[-1]['ayah_number']}" if len(ayahs) > 1 else str(ayahs[0]['ayah_number'])
+    arabic_text = "\n".join(a['arabic_text'] for a in ayahs)
+    combined_translation = " ".join(a['english_translation'] for a in ayahs)
+    ref_text = f"Surah {surah_name} [{surah_num}:{ayah_range}]"
+    audio_urls = [a['audio_url'] for a in ayahs]
 
     # ── Generate content ─────────────────────────────────────────
     hook_text, history = get_hook(history)
@@ -172,8 +164,7 @@ def main():
             arabic_text,
             explanation,
             ref_text,
-            audio_url,
-            audio_url_2=audio_url_2,
+            audio_urls,
             hook_text=hook_text,
             history=history,
         )
@@ -202,9 +193,11 @@ def main():
         traceback.print_exc()
     finally:
         cleanup_files = [
-            "bg.mp4", "audio.mp3", "audio2.mp3", "audio_combined.mp3",
+            "bg.mp4", "audio.mp3", "audio_combined.mp3",
+            "audio_0.mp3", "audio_1.mp3", "audio_2.mp3", "audio_3.mp3",
             "audio_padded.mp3", "silence.mp3", "subtitles.ass",
             "hook_overlay.png", "arabic_overlay.png", "explanation_overlay.png",
+            "subtitle_anim.webm",
         ]
         if not is_dry and 'video_path' in locals():
             cleanup_files.append("final_short.mp4")
