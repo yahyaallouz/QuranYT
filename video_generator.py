@@ -224,7 +224,12 @@ def _reshape_arabic(text):
         try:
             import arabic_reshaper
             from bidi.algorithm import get_display
-            reshaped = arabic_reshaper.reshape(text)
+            reshaper_config = {
+                'delete_harakat': False,
+                'delete_tatweel': False,
+            }
+            reshaper = arabic_reshaper.ArabicReshaper(configuration=reshaper_config)
+            reshaped = reshaper.reshape(text)
             return get_display(reshaped)
         except ImportError:
             print("[warning] arabic_reshaper/python-bidi not installed — Arabic may render incorrectly")
