@@ -1,8 +1,11 @@
 __pycache__/
 *.pyc
 assets/bg.mp4
-assets/audio.mp3
+assets/audio*.mp3
 assets/subtitles.ass
 assets/final_short.mp4
+assets/subtitle_frames/
+assets/subtitle_anim.webm
+assets/*_overlay.png
 token.json
 client_secrets.json
