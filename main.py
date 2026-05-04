@@ -71,8 +71,8 @@ def build_ayah_index(quran):
 
 def select_ayahs():
     """
-    Select up to 4 consecutive same-surah ayahs.
-    Targets ~20-30s audio (ideal for 28-32s video with hook).
+    Select up to 3 consecutive same-surah ayahs.
+    Targets 30-45s total audio. Retries if too long.
     """
     quran = load_json(QURAN_PATH)
     used = load_json(USED_AYAHS_PATH)
@@ -87,31 +87,47 @@ def select_ayahs():
         used_set = set()
         available = quran
 
-    # Prefer shorter ayahs suitable for Shorts
-    short_available = [a for a in available if a['character_count'] < 200]
+    # Prefer shorter ayahs to stay within 30-45s target
+    short_available = [a for a in available if a['character_count'] < 100]
     pool = short_available if short_available else available
-    selected = random.choice(pool)
 
     os.makedirs(ASSETS_DIR, exist_ok=True)
 
-    # Check audio duration of first ayah
-    mp3_path = download_audio_for_check(selected["audio_url"])
-    duration = get_audio_duration(mp3_path)
-    print(f"Ayah duration: {duration:.1f}s")
+    # Try up to 5 times to find a set within duration target
+    for attempt in range(5):
+        selected = random.choice(pool)
 
-    ayahs = [selected]
-    ids_to_mark = [f"{selected['surah_number']}:{selected['ayah_number']}"]
+        mp3_path = download_audio_for_check(selected["audio_url"])
+        duration = get_audio_duration(mp3_path)
 
-    # Collect up to 3 more consecutive ayahs from the same surah
-    for offset in range(1, 4):
-        next_key = (selected["surah_number"], selected["ayah_number"] + offset)
-        next_ayah = ayah_index.get(next_key)
-        if next_ayah:
-            next_id = f"{next_ayah['surah_number']}:{next_ayah['ayah_number']}"
-            ayahs.append(next_ayah)
-            ids_to_mark.append(next_id)
-        else:
+        ayahs = [selected]
+        ids_to_mark = [f"{selected['surah_number']}:{selected['ayah_number']}"]
+        total_dur = duration
+
+        # Collect up to 2 more consecutive ayahs from the same surah
+        for offset in range(1, 3):
+            next_key = (selected["surah_number"], selected["ayah_number"] + offset)
+            next_ayah = ayah_index.get(next_key)
+            if next_ayah:
+                next_id = f"{next_ayah['surah_number']}:{next_ayah['ayah_number']}"
+                ayahs.append(next_ayah)
+                ids_to_mark.append(next_id)
+            else:
+                break
+
+        # Estimate total duration (first ayah measured, rest estimated from char count)
+        est_total = total_dur
+        for a in ayahs[1:]:
+            # Rough estimate: ~0.15s per character
+            est_total += a['character_count'] * 0.15
+
+        if est_total <= 45:
+            print(f"Ayah 1 duration: {duration:.1f}s, est total: {est_total:.0f}s ✓")
             break
+        else:
+            print(f"Attempt {attempt+1}: est {est_total:.0f}s > 45s, retrying...")
+    else:
+        print(f"Using last selection (est {est_total:.0f}s)")
 
     print(f"Selected {len(ayahs)} ayahs: {ids_to_mark}")
     return ayahs, ids_to_mark
