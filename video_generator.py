@@ -129,31 +129,20 @@ def download_english_font():
         return None
 
 
-def fetch_pexels_video(api_key, history=None):
-    """Fetch and download a nature portrait video from Pexels."""
-    if not api_key:
-        raise Exception("PEXELS_API_KEY environment variable is missing!")
+BACKGROUNDS_DIR = os.path.join(ASSETS_DIR, "backgrounds")
 
-    print("Fetching background video from Pexels...")
 
+def pick_random_background(history=None):
+    """Pick a random background image from assets/backgrounds/."""
     if history is None:
         history = load_history()
 
-    query = pick_background_query(history=history, memory=BG_MEMORY)
-    record(history, "bg_queries", query, memory=BG_MEMORY)
-    print(f"[bg] Using query: {query}")
+    images = [f for f in os.listdir(BACKGROUNDS_DIR)
+              if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    if not images:
+        raise Exception("No background images found in assets/backgrounds/!")
 
-    headers = {"Authorization": api_key}
-    url = (f"https://api.pexels.com/videos/search"
-           f"?query={query}&orientation=portrait&size=medium&per_page=20")
-
-    r = requests.get(url, headers=headers, timeout=30)
-    if r.status_code != 200:
-        raise Exception(f"Pexels API error: {r.status_code} {r.text}")
-
-    videos = r.json().get("videos", [])
-
-    # Load used background IDs
+    # Avoid recent backgrounds
     used_bgs = []
     if os.path.exists(USED_BGS_PATH):
         try:
@@ -163,27 +152,20 @@ def fetch_pexels_video(api_key, history=None):
             used_bgs = []
     used_bgs = used_bgs[-BG_MEMORY:]
 
-    available = [v for v in videos if v["id"] not in used_bgs]
+    available = [img for img in images if img not in used_bgs]
     if not available:
-        available = videos
+        available = images
 
     selected = random.choice(available)
-    used_bgs.append(selected["id"])
+    used_bgs.append(selected)
     with open(USED_BGS_PATH, "w") as f:
         json.dump(used_bgs, f)
 
-    record(history, "backgrounds", selected["id"], memory=BG_MEMORY)
+    record(history, "backgrounds", selected, memory=BG_MEMORY)
 
-    video_files = [vf for vf in selected["video_files"] if vf.get("height")]
-    video_files.sort(key=lambda x: x["height"], reverse=True)
-    best_link = video_files[0]["link"]
-
-    vid_path = os.path.join(ASSETS_DIR, "bg.mp4")
-    print(f"Downloading Pexels video ID {selected['id']}...")
-    req = requests.get(best_link, timeout=60)
-    with open(vid_path, "wb") as f:
-        f.write(req.content)
-    return vid_path, history
+    bg_path = os.path.join(BACKGROUNDS_DIR, selected)
+    print(f"[bg] Using background image: {selected}")
+    return bg_path, history
 
 
 def concatenate_audio(audio_urls):
@@ -597,15 +579,12 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_urls,
     Subtitle is an animated WebM with line-by-line spring reveal.
     Audio delayed via adelay filter. Hook on top for 2.3–2.8s.
     """
-    pexels_key = os.environ.get("PEXELS_API_KEY")
-    if not pexels_key:
-        raise Exception("PEXELS_API_KEY environment variable is missing!")
 
     if history is None:
         history = load_history()
 
     font_path = get_arabic_font_path()
-    bg_video, history = fetch_pexels_video(pexels_key, history=history)
+    bg_image, history = pick_random_background(history=history)
 
     # Download and concatenate all audio files
     audio_file, ayah_durations = concatenate_audio(audio_urls)
@@ -675,8 +654,8 @@ def generate_video(arabic_text, explanation_text, ref_text, audio_urls,
 
     cmd = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1",
-        "-i", bg_video,
+        "-loop", "1",
+        "-i", bg_image,
         "-i", audio_file,
         "-framerate", str(sub_fps),
         "-i", frames_pattern,
