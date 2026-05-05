@@ -1,6 +1,5 @@
 {
   "hooks": [
-    "When hope feels far away…",
     "This will calm your heart",
     "These words will stay with you",
     "Allah says something powerful here",
@@ -9,7 +8,8 @@
     "When you feel lost… read this",
     "This is your sign to keep going",
     "Listen with your heart",
-    "A reminder you need today"
+    "A reminder you need today",
+    "Read this when you feel overwhelmed"
   ],
   "backgrounds": [
     33705666,
@@ -23,7 +23,8 @@
     13145704,
     30332161,
     19402858,
-    36311930
+    36311930,
+    "1f2081eccba4ca02bd96c8f7c992433d.jpg"
   ],
   "bg_queries": [
     "clouds",
@@ -51,7 +52,8 @@
     "Feel the peace in these words.",
     "Reflect on this beautiful ayah.",
     "Take a moment and reflect.",
-    "Let this verse bring you peace."
+    "Let this verse bring you peace.",
+    "Let Allah's words guide you."
   ],
-  "last_post_timestamp": 0
+  "last_post_timestamp": 1777951218.835619
 }
