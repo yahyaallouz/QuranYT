@@ -1,6 +1,5 @@
 {
   "hooks": [
-    "Listen with your heart",
     "A reminder you need today",
     "Read this when you feel overwhelmed",
     "When hope feels far away…",
@@ -9,10 +8,10 @@
     "Allah says something powerful here",
     "Allah hasn't forgotten you",
     "These words will stay with you",
-    "When you feel lost… read this"
+    "When you feel lost… read this",
+    "Let this heal your heart"
   ],
   "backgrounds": [
-    33705666,
     35000871,
     34535421,
     32036144,
@@ -31,7 +30,8 @@
     "6f687971ac6a9d0c2a4b2555ecefcc64.jpg",
     "5979cae6ecffc08b55da325ba8b6ae97.jpg",
     "dfe5150d31317f6dbf96d9f03664e08a.jpg",
-    "2325517e22a3ab41944bea2ad92ba36e.jpg"
+    "2325517e22a3ab41944bea2ad92ba36e.jpg",
+    "c358ff6118fc5d93cdc36f251dced8ae.jpg"
   ],
   "bg_queries": [
     "clouds",
@@ -48,7 +48,6 @@
     "river"
   ],
   "descriptions": [
-    "A moment of calm from the Qur'an.",
     "A reminder that and we ransomed him with a great sacrifice.",
     "May these words soften your heart.",
     "Your heart was meant to hear this.",
@@ -65,7 +64,8 @@
     "Close your eyes and listen.",
     "Words your soul needs today.",
     "A reminder that indeed.",
-    "This ayah is a gentle reminder."
+    "This ayah is a gentle reminder.",
+    "This verse carries deep meaning."
   ],
-  "last_post_timestamp": 1778238812.8359303
+  "last_post_timestamp": 1778246979.0136087
 }
