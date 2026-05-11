@@ -1,6 +1,5 @@
 {
   "hooks": [
-    "This will calm your heart",
     "Allah says something powerful here",
     "Allah hasn't forgotten you",
     "These words will stay with you",
@@ -9,10 +8,10 @@
     "A verse for the broken-hearted",
     "This is your sign to keep going",
     "Your heart needs this right now",
-    "You need to hear this today"
+    "You need to hear this today",
+    "Read this and feel the peace"
   ],
   "backgrounds": [
-    12640160,
     32340120,
     34346389,
     13145704,
@@ -31,7 +30,8 @@
     "67262dd5b216adbb5e451c2e3a236cc9.jpg",
     "8d5759cc1a5914884e7566bcc7f139ca.jpg",
     "d3a5d6b523805da5fb1b29f45ef68800.jpg",
-    "d25328302ff794caee64a3d12c665f69.jpg"
+    "d25328302ff794caee64a3d12c665f69.jpg",
+    "34c17fe5cb20d1b84390bedf839d9600.jpg"
   ],
   "bg_queries": [
     "clouds",
@@ -48,7 +48,6 @@
     "river"
   ],
   "descriptions": [
-    "A reminder that [it is but] a small enjoyment; then their [fina....",
     "Feel the peace in these words.",
     "Reflect on this beautiful ayah.",
     "Take a moment and reflect.",
@@ -65,7 +64,8 @@
     "A moment of calm from the Qur'an.",
     "A reminder that [al-khidh r] said.",
     "A reflection that so [moses] threw his staff.",
-    "Your heart was meant to hear this."
+    "Your heart was meant to hear this.",
+    "May these words soften your heart."
   ],
-  "last_post_timestamp": 1778510828.9190361
+  "last_post_timestamp": 1778528755.806159
 }
